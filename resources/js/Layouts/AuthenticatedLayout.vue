@@ -5,7 +5,7 @@ import ApplicationLogo from '@/Components/ApplicationLogo.vue';
 import NavLink from '@/Components/NavLink.vue';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink.vue'; // IMPORTANTE
 import {
-    LayoutDashboard, Settings, User, LogOut,
+    LayoutDashboard, Settings, Music, User, LogOut,
     ChevronLeft, Menu, X // Añadimos iconos para el móvil
 } from 'lucide-vue-next';
 
@@ -43,6 +43,7 @@ const hasCustomLogo = computed(() => !!settings.value?.logo_path);
 const navItems = [
     { name: 'Dashboard', route: 'dashboard', icon: LayoutDashboard },
     { name: 'Ajustes', route: 'settings.edit', icon: Settings },
+    { name: 'Canciones', route: 'songs.index', icon: Music },
 ];
 </script>
 

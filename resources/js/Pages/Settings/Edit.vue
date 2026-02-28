@@ -76,7 +76,8 @@ const currentLogoUrl = computed(() => {
 });
 
 watch(() => page.props.flash, (flash) => {
-    if (!flash?.message && !flash?.error) return;
+    if (!flash?.message && !flash?.success && !flash?.error) return;
+
     const Toast = Swal.mixin({
         toast: true,
         position: 'top-end',
@@ -85,9 +86,27 @@ watch(() => page.props.flash, (flash) => {
         timerProgressBar: true,
         background: '#12141c',
         color: '#ffffff',
+        customClass: {
+            popup: 'border border-white/10 backdrop-blur-xl rounded-2xl shadow-2xl',
+        }
     });
-    if (flash.message) Toast.fire({ icon: 'success', title: flash.message });
-    if (flash.error) Toast.fire({ icon: 'error', title: flash.error });
+
+    const message = flash.message || flash.success;
+
+    if (message) {
+        Toast.fire({
+            icon: 'success',
+            title: message.toUpperCase(),
+            iconColor: form.accent_color || '#6366f1'
+        });
+    }
+
+    if (flash.error) {
+        Toast.fire({
+            icon: 'error',
+            title: flash.error.toUpperCase()
+        });
+    }
 }, { deep: true });
 
 const updateSettings = () => {
