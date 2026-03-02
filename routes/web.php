@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\ServiceTableController;
 use App\Http\Controllers\ShopSettingsController;
 use App\Http\Controllers\SongController;
 use Illuminate\Foundation\Application;
@@ -31,6 +32,13 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('/songs/{song}', [SongController::class, 'destroy'])->name('songs.destroy');
 });
 
+Route::middleware(['auth'])->group(function () {
+    // Gestión de Mesas
+    Route::get('/tables', [ServiceTableController::class, 'index'])->name('tables.index');
+    Route::post('/tables', [ServiceTableController::class, 'store'])->name('tables.store');
+    Route::put('/tables/{table}', [ServiceTableController::class, 'update'])->name('tables.update');
+    Route::delete('/tables/{table}', [ServiceTableController::class, 'destroy'])->name('tables.destroy');
+});
 
 Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

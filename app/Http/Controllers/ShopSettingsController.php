@@ -15,6 +15,7 @@ class ShopSettingsController extends Controller
 {
     public function edit(Request $request): Response
     {
+        // IMPORTANTE: Aseguramos que busque los ajustes DEL USUARIO logueado
         $settings = Setting::firstOrCreate(
             ['user_id' => $request->user()->id],
             [
@@ -32,7 +33,8 @@ class ShopSettingsController extends Controller
 
         return Inertia::render('Settings/Edit', [
             'settings' => $settings,
-            'status'   => session('status'),
+            // Cambiamos 'status' por session('success') para ser consistentes con SweetAlert
+            'success'  => session('success'), 
         ]);
     }
 
@@ -40,30 +42,28 @@ class ShopSettingsController extends Controller
     {
         try {
             $data = $request->validated();
+            $user = $request->user();
 
-            $settings = Setting::firstOrCreate(['user_id' => $request->user()->id]);
+            // Buscamos los ajustes específicos de este dueño
+            $settings = Setting::where('user_id', $user->id)->firstOrFail();
 
             if ($request->hasFile('logo')) {
+                // Limpieza del logo anterior
                 if ($settings->logo_path) {
                     Storage::disk('public')->delete($settings->logo_path);
                 }
 
-                $file = $request->file('logo');
-                // Forzamos la extensión a .png para asegurar la transparencia procesada
+                $file     = $request->file('logo');
                 $filename = 'logos/' . uniqid() . '.png';
 
-                // --- PROCESAMIENTO MEJORADO ---
+                // PROCESAMIENTO CON INTERVENTION IMAGE v3
                 $img = Image::read($file);
 
-                // 1. Aplicamos Trim con tolerancia (15 es ideal para limpiar bordes sucios)
+                // Trim para eliminar bordes vacíos y asegurar transparencia PNG
                 $img->trim(tolerance: 15);
-
-                // 2. Codificamos específicamente a PNG para mantener la transparencia pura
                 $encoded = $img->toPng();
 
-                // 3. Guardamos los datos binarios
                 Storage::disk('public')->put($filename, (string) $encoded);
-
                 $data['logo_path'] = $filename;
             }
 
@@ -74,13 +74,14 @@ class ShopSettingsController extends Controller
             }
 
             $settings->update($data);
-            $settings->refresh();
 
-            return back()->with('message', '¡Imagen recortada y marca actualizada!');
+            // --- EL CAMBIO CLAVE AQUÍ ---
+            // Usamos 'success' en lugar de 'message' para que Vue lo detecte correctamente
+            return back()->with('success', '¡Identidad visual actualizada con éxito!');
 
         } catch (\Exception $e) {
             Log::error("Error en Settings Update: " . $e->getMessage());
-            return back()->with('error', 'Error al procesar el logo: ' . $e->getMessage());
+            return back()->with('error', 'Hubo un problema al guardar los cambios: ' . $e->getMessage());
         }
     }
 }

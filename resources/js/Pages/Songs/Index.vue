@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, computed } from 'vue';
-import { useForm, Head, router, usePage } from '@inertiajs/vue3'; // Importamos usePage
+import { useForm, Head, router, usePage } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import TableFilters from '@/Components/TableFilters.vue';
 import Pagination from '@/Components/Pagination.vue';
@@ -8,7 +8,7 @@ import EmptyState from '@/Components/EmptyState.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import InputError from '@/Components/InputError.vue';
 import Swal from 'sweetalert2';
-import { Youtube, Plus, Trash2, Music, BarChart3, Loader2 } from 'lucide-vue-next';
+import { Youtube, Plus, Trash2, Music, BarChart3, Loader2, User } from 'lucide-vue-next';
 
 const props = defineProps({
     songs: Object,
@@ -16,11 +16,17 @@ const props = defineProps({
     settings: Object,
 });
 
-const page = usePage(); // Acceso al estado global de Inertia
+const page = usePage();
 
-// --- LÓGICA DE TOAST (IGUAL A SETTINGS) ---
+// --- LÓGICA DE TOAST MEJORADA ---
 watch(() => page.props.flash, (flash) => {
-    if (!flash?.success && !flash?.message && !flash?.error) return;
+    // Si no hay nada nuevo, ignorar
+    if (!flash) return;
+
+    const successMsg = flash.success || flash.message;
+    const errorMsg = flash.error;
+
+    if (!successMsg && !errorMsg) return;
 
     const Toast = Swal.mixin({
         toast: true,
@@ -35,33 +41,43 @@ watch(() => page.props.flash, (flash) => {
         }
     });
 
-    // Adaptamos para que lea 'success' o 'message'
-    if (flash.success || flash.message) {
+    if (successMsg) {
         Toast.fire({
             icon: 'success',
-            title: flash.success || flash.message,
+            title: String(successMsg).toUpperCase(),
             iconColor: props.settings?.accent_color || '#6366f1'
         });
     }
-    if (flash.error) {
-        Toast.fire({ icon: 'error', title: flash.error });
+
+    if (errorMsg) {
+        Toast.fire({
+            icon: 'error',
+            title: String(errorMsg).toUpperCase()
+        });
     }
-}, { deep: true });
+}, { deep: true, immediate: true });
 
 const search = ref(props.filters.search || '');
 const perPage = ref(props.filters.perPage || '10');
 
-// Lógica de filtrado
+// Lógica de filtrado con debounce
 let timer = null;
 watch(search, (v) => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-        router.get(route('songs.index'), { search: v, perPage: perPage.value }, { preserveState: true, replace: true, preserveScroll: true });
+        router.get(route('songs.index'),
+            { search: v, perPage: perPage.value },
+            { preserveState: true, replace: true, preserveScroll: true }
+        );
     }, 400);
 });
 
+// Watch para perPage corregido
 watch(perPage, (v) => {
-    router.get(route('songs.index'), { search: search.value, perPage: v }, { preserveState: true, replace: true });
+    router.get(route('songs.index'),
+        { search: search.value, perPage: v },
+        { preserveState: true, preserveScroll: true }
+    );
 });
 
 const themeStyles = computed(() => ({
@@ -75,7 +91,10 @@ const form = useForm({ youtube_url: '' });
 
 const submit = () => {
     form.post(route('songs.store'), {
-        onSuccess: () => form.reset(),
+        onSuccess: () => {
+            form.reset();
+            // El watch de page.props.flash disparará el Swal automáticamente
+        },
         preserveScroll: true
     });
 };
@@ -93,7 +112,7 @@ const deleteFromLibrary = (id) => {
         background: props.settings?.sidebar_color || '#12141c',
         color: '#fff',
         customClass: {
-            popup: 'rounded-[var(--radius)] border border-white/10 backdrop-blur-xl shadow-2xl',
+            popup: `rounded-[${props.settings?.border_radius || '1rem'}] border border-white/10 backdrop-blur-xl shadow-2xl`,
             title: 'font-black uppercase italic tracking-widest text-xl',
         }
     }).then((result) => {
@@ -123,7 +142,7 @@ const deleteFromLibrary = (id) => {
                     class="flex gap-3 p-2 bg-black/40 border border-white/5 rounded-2xl focus-within:border-[var(--accent)]/50 transition-all shadow-inner">
                     <div class="flex-1 flex items-center px-4 gap-3">
                         <Youtube class="w-6 h-6 text-red-600 shadow-[0_0_15px_rgba(220,38,38,0.4)]" />
-                        <input v-model="form.youtube_url" type="text" placeholder="URL DE YOUTUBE..."
+                        <input v-model="form.youtube_url" type="text" placeholder="PEGA EL LINK DE YOUTUBE AQUÍ..."
                             class="w-full bg-transparent border-none text-white font-bold text-xs uppercase focus:ring-0" />
                     </div>
                     <PrimaryButton :disabled="form.processing" :style="{ borderRadius: '0.75rem' }">
@@ -145,19 +164,19 @@ const deleteFromLibrary = (id) => {
                     </div>
 
                     <TableFilters v-model:search="search" v-model:perPage="perPage"
-                        placeholder="BUSCAR HIT O ID DEL VIDEO..." />
+                        placeholder="BUSCAR CANCIÓN, ARTISTA O ID..." />
                 </div>
 
                 <div class="overflow-x-auto">
                     <table v-if="songs.data.length > 0" class="w-full text-left">
                         <thead>
                             <tr
-                                class="text-[10px] font-black text-gray-600 uppercase tracking-widest border-b border-white/5 bg-black/20">
-                                <th class="px-8 py-5 w-16">#</th>
-                                <th class="px-4 py-5 text-center">Vista</th>
-                                <th class="px-8 py-5">Información</th>
-                                <th class="px-8 py-5 text-center">Plays</th>
-                                <th class="px-8 py-5 text-right">Acciones</th>
+                                class="text-xs font-black text-gray-500 uppercase tracking-[0.2em] border-b border-white/5 bg-black/40">
+                                <th class="px-8 py-6 w-20">#</th>
+                                <th class="px-4 py-6 text-center">Vista</th>
+                                <th class="px-8 py-6">Información del Hit</th>
+                                <th class="px-8 py-6 text-center">Popularidad</th>
+                                <th class="px-8 py-6 text-right">Acciones</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-white/5">
@@ -166,36 +185,60 @@ const deleteFromLibrary = (id) => {
                                 <td class="px-8 py-4 text-[10px] font-mono text-gray-500 italic">
                                     {{ (songs.current_page - 1) * songs.per_page + index + 1 }}
                                 </td>
+
                                 <td class="px-4 py-4">
                                     <div
                                         class="relative w-24 h-14 rounded-xl overflow-hidden border border-white/10 group-hover:border-[var(--accent)]/50 transition-all shadow-lg mx-auto">
-                                        <img :src="`https://img.youtube.com/vi/${song.youtube_id}/mqdefault.jpg`"
+                                        <img :src="song.thumbnail_url || `https://img.youtube.com/vi/${song.youtube_id}/mqdefault.jpg`"
                                             class="w-full h-full object-cover" />
                                     </div>
                                 </td>
+
                                 <td class="px-8 py-4">
-                                    <div class="flex flex-col gap-1">
+                                    <div class="flex flex-col gap-2">
                                         <span
-                                            class="text-[11px] font-black text-white uppercase truncate max-w-xs leading-none">
+                                            class="text-sm font-black text-white uppercase tracking-tight truncate max-w-xs">
                                             {{ song.title }}
                                         </span>
+
+                                        <div class="flex items-center gap-2">
+                                            <User class="w-3.5 h-3.5 text-gray-500" />
+                                            <span
+                                                class="text-xs font-bold text-[var(--accent)] uppercase tracking-wide">
+                                                {{ song.artist || 'Artista Desconocido' }}
+                                            </span>
+                                        </div>
+
+                                        <div v-if="song.youtube_title"
+                                            class="mt-0.5 flex items-start gap-1.5 opacity-50 group-hover:opacity-100 transition-opacity">
+                                            <span
+                                                class="text-[10px] font-mono text-gray-400 leading-none bg-white/5 px-2 py-1 rounded border border-white/10 italic">
+                                                <span class="text-red-500/80 mr-1 font-bold">YT:</span> {{
+                                                song.youtube_title }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </td>
+
+                                <td class="px-8 py-4 text-center">
+                                    <div class="flex flex-col items-center gap-2">
                                         <span
-                                            class="text-[9px] font-mono text-gray-600 uppercase tracking-tighter italic">
-                                            ID: {{ song.youtube_id }}
+                                            class="inline-flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-lg border border-white/5 text-xs font-black text-white italic shadow-sm">
+                                            <BarChart3 class="w-3.5 h-3.5 text-[var(--accent)]" />
+                                            {{ song.times_played }}
+                                        </span>
+
+                                        <span v-if="song.last_played_at"
+                                            class="text-[10px] text-gray-500 uppercase font-black tracking-wider opacity-80">
+                                            Última: {{ new Date(song.last_played_at).toLocaleDateString() }}
                                         </span>
                                     </div>
                                 </td>
-                                <td class="px-8 py-4 text-center">
-                                    <span
-                                        class="inline-flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-lg border border-white/5 text-[10px] font-black text-white italic">
-                                        <BarChart3 class="w-3 h-3 text-[var(--accent)]" />
-                                        {{ song.times_played }}
-                                    </span>
-                                </td>
+
                                 <td class="px-8 py-4 text-right">
                                     <button @click="deleteFromLibrary(song.id)"
-                                        class="p-2.5 text-white/10 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all active:scale-95">
-                                        <Trash2 class="w-4 h-4" />
+                                        class="p-3 text-white/20 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all active:scale-90 border border-transparent hover:border-red-500/20">
+                                        <Trash2 class="w-5 h-5" />
                                     </button>
                                 </td>
                             </tr>

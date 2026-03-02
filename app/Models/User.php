@@ -77,4 +77,10 @@ class User extends Authenticatable
     {
         return $this->hasMany(Queue::class);
     }
+
+    public function serviceTables()
+    {
+        // Un usuario (dueño de karaoke) tiene muchas mesas
+        return $this->hasMany(ServiceTable::class);
+    }
 }

@@ -13,25 +13,26 @@ class SongController extends Controller
     {
         $user = Auth::user();
 
-        // 1. Iniciamos la consulta (Query Builder)
-        $query = Song::query();
+        // 1. Filtramos solo las canciones que pertenecen al usuario logueado
+        $query = Song::where('user_id', $user->id);
 
-        // 2. Aplicamos el filtro de búsqueda si existe
-        if ($request->has('search')) {
-            $query->where('title', 'like', '%' . $request->search . '%')
-                ->orWhere('youtube_id', 'like', '%' . $request->search . '%');
+        // 2. Aplicamos filtros de búsqueda (ahora busca en título y artista)
+        if ($request->filled('search')) {
+            $query->where(function ($q) use ($request) {
+                $q->where('title', 'like', '%' . $request->search . '%')
+                    ->orWhere('artist', 'like', '%' . $request->search . '%')
+                    ->orWhere('youtube_id', 'like', '%' . $request->search . '%');
+            });
         }
 
-        // 3. Obtenemos las canciones paginadas
-        // Usamos withQueryString() para que al cambiar de página se mantenga el filtro de búsqueda
-        $songs = $query->orderBy('created_at', 'desc') // Los últimos registrados primero
+        $songs = $query->orderBy('created_at', 'desc')
             ->paginate($request->input('perPage', 10))
             ->withQueryString();
 
         return Inertia::render('Songs/Index', [
             'songs'    => $songs,
-            'filters'  => $request->only(['search', 'perPage']), // Devolvemos los filtros para que el input no se borre
-            'settings' => $user ? $user->settings : null,
+            'filters'  => $request->only(['search', 'perPage']),
+            'settings' => $user->settings,
         ]);
     }
 
@@ -43,7 +44,7 @@ class SongController extends Controller
 
         $url = $request->youtube_url;
 
-        // 1. Extraer el ID de YouTube usando una expresión regular
+        // 1. Extraer ID de YouTube
         preg_match("/^(?:http(?:s)?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|youtube\.com\/(?:(?:watch)?\?v=|embed\/|v\/))([^\?&\"'>]+)/", $url, $matches);
 
         if (! isset($matches[1])) {
@@ -51,31 +52,58 @@ class SongController extends Controller
         }
 
         $videoId = $matches[1];
+        $user    = Auth::user();
 
-        // 2. Obtener el título del video (Truco rápido sin API Key compleja)
-        // Usamos el servicio oembed de YouTube que es gratuito y público
+        // 2. Evitar duplicados para este usuario específico
+        $exists = Song::where('user_id', $user->id)->where('youtube_id', $videoId)->exists();
+        if ($exists) {
+            return back()->with('error', 'Esta canción ya está en tu biblioteca.');
+        }
+
+        // 3. Obtener info de YouTube (oembed es gratuito y no requiere API Key compleja)
         $response = Http::get("https://www.youtube.com/oembed?url=http://www.youtube.com/watch?v={$videoId}&format=json");
 
         if ($response->failed()) {
-            return back()->with('error', 'No pudimos obtener información del video.');
+            return back()->with('error', 'No pudimos conectar con YouTube.');
         }
 
         $videoData = $response->json();
+        $rawTitle  = $videoData['title'];
 
-        // 3. Guardar en la base de datos
+        // 4. LÓGICA DE LIMPIEZA AUTOMÁTICA
+        // Intentamos separar "Artista - Título" si el video viene con ese formato
+        $artist = $videoData['author_name'] ?? 'Desconocido';
+        $title  = $rawTitle;
+
+        if (str_contains($rawTitle, ' - ')) {
+            $parts  = explode(' - ', $rawTitle);
+            $artist = trim($parts[0]);
+            $title  = trim($parts[1]);
+        }
+
+        // 5. Guardar con la nueva estructura
         Song::create([
-            'title'        => $videoData['title'],
-            'youtube_id'   => $videoId,
-            'youtube_url'  => $url,
-            'times_played' => 0,
+            'user_id'       => $user->id,
+            'title'         => $title,
+            'artist'        => $artist,
+            'youtube_title' => $rawTitle,
+            'youtube_id'    => $videoId,
+            'thumbnail_url' => $videoData['thumbnail_url'] ?? null,
+            'times_played'  => 0,
         ]);
 
-        return redirect()->route('songs.index')->with('message', '¡Hit añadido a la cola!');
+        return redirect()->route('songs.index')->with('success', '¡Hit añadido correctamente!');
+
     }
 
     public function destroy(Song $song)
     {
+        // Seguridad: Solo el dueño puede borrar su propia canción
+        if ($song->user_id !== Auth::id()) {
+            abort(403);
+        }
+
         $song->delete();
-        return back()->with('message', 'Canción eliminada de la lista.');
+        return back()->with('success', 'Canción eliminada de tu biblioteca.');
     }
 }

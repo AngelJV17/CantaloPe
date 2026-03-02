@@ -76,7 +76,13 @@ const currentLogoUrl = computed(() => {
 });
 
 watch(() => page.props.flash, (flash) => {
-    if (!flash?.message && !flash?.success && !flash?.error) return;
+    if (!flash) return;
+
+    // Extraemos el mensaje dando prioridad a 'success'
+    const message = flash.success || flash.message;
+    const error = flash.error;
+
+    if (!message && !error) return;
 
     const Toast = Swal.mixin({
         toast: true,
@@ -91,23 +97,22 @@ watch(() => page.props.flash, (flash) => {
         }
     });
 
-    const message = flash.message || flash.success;
-
     if (message) {
         Toast.fire({
             icon: 'success',
-            title: message.toUpperCase(),
+            // .toUpperCase() es genial para el estilo "Cyberpunk" que llevas
+            title: String(message).toUpperCase(),
             iconColor: form.accent_color || '#6366f1'
         });
     }
 
-    if (flash.error) {
+    if (error) {
         Toast.fire({
             icon: 'error',
-            title: flash.error.toUpperCase()
+            title: String(error).toUpperCase()
         });
     }
-}, { deep: true });
+}, { deep: true, immediate: true });
 
 const updateSettings = () => {
     if (form.processing) return;
@@ -235,7 +240,7 @@ onUnmounted(clearPreview);
                                         class="mt-1 block w-full bg-[#1e2029]/50 border-white/5 rounded-xl text-white text-sm focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all">
                                         <option v-for="font in FONT_OPTIONS" :key="font.value" :value="font.value">{{
                                             font.name
-                                        }}</option>
+                                            }}</option>
                                     </select>
                                 </div>
                                 <div>
