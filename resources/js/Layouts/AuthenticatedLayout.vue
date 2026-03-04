@@ -6,7 +6,7 @@ import NavLink from '@/Components/NavLink.vue';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink.vue'; // IMPORTANTE
 import {
     LayoutDashboard, Settings, Music, User, LogOut,
-    ChevronLeft, Menu, X, LayoutGrid
+    ChevronLeft, Menu, X, LayoutGrid, ListMusic
 } from 'lucide-vue-next';
 
 const isSidebarOpen = ref(true);
@@ -42,9 +42,10 @@ const hasCustomLogo = computed(() => !!settings.value?.logo_path);
 // Lista de navegación para reutilizar en ambos menús
 const navItems = [
     { name: 'Dashboard', route: 'dashboard', icon: LayoutDashboard },
-    { name: 'Ajustes', route: 'settings.edit', icon: Settings },
-    { name: 'Canciones', route: 'songs.index', icon: Music }, 
+    { name: 'Cola DJ', route: 'queues.index', icon: ListMusic },
+    { name: 'Canciones', route: 'songs.index', icon: Music },
     { name: 'Mesas', route: 'tables.index', icon: LayoutGrid },
+    { name: 'Ajustes', route: 'settings.edit', icon: Settings },
 ];
 </script>
 
