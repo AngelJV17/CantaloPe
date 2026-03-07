@@ -1,9 +1,9 @@
 <?php
-
 namespace App\Http\Controllers;
 
 use App\Models\Queue;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
@@ -17,7 +17,7 @@ class QueueController extends Controller
             ->get();
 
         return Inertia::render('Queues/Index', [
-            'queues' => $queues
+            'queues' => $queues,
         ]);
     }
 
@@ -25,44 +25,81 @@ class QueueController extends Controller
     {
         $validated = $request->validate([
             'service_table_id' => 'required|exists:service_tables,id',
-            'song_id' => 'nullable|exists:songs,id',
-            'customer_name' => 'required|string',
-            'is_vip' => 'boolean',
-            'amount_paid' => 'numeric',
+            'song_id'          => 'nullable|exists:songs,id',
+            'customer_name'    => 'required|string',
+            'is_vip'           => 'boolean',
+            'amount_paid'      => 'numeric',
         ]);
 
         DB::transaction(function () use ($validated) {
-            // 1. Crear el nuevo registro
-            $newItem = Queue::create([
-                'user_id' => auth()->id(),
+
+            Queue::create([
+                'user_id'          => Auth::id(), // ✔ forma recomendada
                 'service_table_id' => $validated['service_table_id'],
-                'song_id' => $validated['song_id'],
-                'customer_name' => $validated['customer_name'],
-                'type' => 'song',
-                'is_vip' => $validated['is_vip'] ?? false,
-                'amount_paid' => $validated['amount_paid'] ?? 0,
-                'status' => 'pending',
+                'song_id'          => $validated['song_id'],
+                'customer_name'    => $validated['customer_name'],
+                'type'             => 'song',
+                'is_vip'           => $validated['is_vip'] ?? false,
+                'amount_paid'      => $validated['amount_paid'] ?? 0,
+                'status'           => 'pending',
             ]);
 
-            // 2. REORDENAR TODA LA COLA PENDIENTE
             $this->reorderQueue();
         });
 
         return back()->with('success', 'Canción agregada a la cola');
     }
 
+    public function updateStatus(Request $request, Queue $queue)
+    {
+        $validated = $request->validate([
+            'status' => 'required|in:pending,ready,playing,played',
+        ]);
+
+        DB::transaction(function () use ($queue, $validated) {
+
+            // Si se está reproduciendo una canción
+            if ($validated['status'] === 'playing') {
+
+                // terminar cualquier otra que esté reproduciéndose
+                Queue::where('status', 'playing')
+                    ->update(['status' => 'played']);
+            }
+
+            $queue->update([
+                'status' => $validated['status'],
+            ]);
+
+            // Reordenar la cola después de cambios
+            $this->reorderQueue();
+        });
+
+        return back();
+    }
+
     protected function reorderQueue()
     {
-        // Obtenemos todos los pendientes
         $items = Queue::whereIn('status', ['pending', 'ready'])
-            ->orderByDesc('is_vip') // Primero los VIP
-            ->orderByDesc('amount_paid') // Luego los que pagaron más
-            ->orderBy('created_at', 'asc') // Finalmente por orden de llegada
+            ->orderByDesc('is_vip')
+            ->orderByDesc('amount_paid')
+            ->orderBy('created_at', 'asc')
             ->get();
 
-        // Actualizamos su order_index secuencialmente
         foreach ($items as $index => $item) {
-            $item->update(['order_index' => $index + 1]);
+            $item->update([
+                'order_index' => $index + 1,
+            ]);
         }
+    }
+
+    public function stage()
+    {
+        $current = Queue::with('song')
+            ->where('status', 'playing')
+            ->first();
+
+        return Inertia::render('Stage/Show', [
+            'current' => $current,
+        ]);
     }
 }

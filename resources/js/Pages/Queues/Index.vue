@@ -3,9 +3,9 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, router, usePage } from '@inertiajs/vue3';
 import {
     Play, CheckCircle2, Star, Music,
-    User2, Mic2, ListMusic, Flame
+    User2, Mic2, Flame
 } from 'lucide-vue-next';
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
 const props = defineProps({
     queues: Array
@@ -13,14 +13,47 @@ const props = defineProps({
 
 const page = usePage();
 const settings = computed(() => page.props.auth.settings);
+const userId = computed(() => page.props.auth.user.id);
 
-const updateStatus = (id, newStatus) => {
+/*
+Controlamos si ya se abrió la pantalla
+para no abrir varias ventanas
+*/
+const stageWindow = ref(null);
+
+/**
+ * Iniciar reproducción
+ */
+const playSong = (id) => {
     router.patch(route('queues.update-status', id), {
-        status: newStatus
+        status: 'playing'
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            /*
+            Abrimos la pantalla de proyección
+            SOLO la primera vez
+            */
+            if (!stageWindow.value || stageWindow.value.closed) {
+                stageWindow.value = window.open(
+                    `/stage/${userId.value}`,
+                    'karaoke_stage',
+                    'width=1280,height=720'
+                )
+            } else {
+                stageWindow.value.focus()
+            }
+        }
+    })
+}
+
+const finishSong = (id) => {
+    router.patch(route('queues.update-status', id), {
+        status: 'played'
     }, {
         preserveScroll: true
-    });
-};
+    })
+}
 </script>
 
 <template>
@@ -112,14 +145,14 @@ const updateStatus = (id, newStatus) => {
 
                         <div
                             class="flex items-center gap-3 w-full md:w-auto border-t md:border-t-0 border-white/5 pt-4 md:pt-0">
-                            <button v-if="item.status === 'pending'" @click="updateStatus(item.id, 'playing')"
+                            <button v-if="item.status === 'pending'" @click="playSong(item.id)"
                                 class="flex-1 md:flex-none flex items-center justify-center gap-3 bg-white/5 hover:bg-white/10 text-white font-bold uppercase tracking-[0.2em] px-8 py-4 text-[10px] border border-white/5 transition-all active:scale-95"
                                 :style="{ borderRadius: settings?.border_radius || '0.75rem' }">
                                 <Play class="w-4 h-4 fill-current" />
                                 Reproducir
                             </button>
 
-                            <button v-if="item.status === 'playing'" @click="updateStatus(item.id, 'played')"
+                            <button v-if="item.status === 'playing'" @click="finishSong(item.id)"
                                 class="flex-1 md:flex-none flex items-center justify-center gap-3 text-white font-bold uppercase tracking-[0.2em] px-8 py-4 text-[10px] shadow-xl transition-all active:scale-95"
                                 :style="{
                                     backgroundColor: settings?.accent_color || '#6366f1',
