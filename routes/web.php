@@ -13,7 +13,7 @@ use Inertia\Inertia;
 
 /*
 |--------------------------------------------------------------------------
-| Página pública
+| Página Pública
 |--------------------------------------------------------------------------
 */
 
@@ -32,9 +32,13 @@ Route::get('/', function () {
 |--------------------------------------------------------------------------
 */
 
-Route::get('/dashboard', function () {
-    return Inertia::render('Dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
+Route::middleware(['auth', 'verified'])->group(function () {
+
+    Route::get('/dashboard', fn() =>
+        Inertia::render('Dashboard')
+    )->name('dashboard');
+
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -42,81 +46,105 @@ Route::get('/dashboard', function () {
 |--------------------------------------------------------------------------
 */
 
-Route::middleware(['auth', 'verified'])->group(function () {
+Route::middleware(['auth', 'verified'])->prefix('settings')->group(function () {
 
-    Route::get('/settings', [ShopSettingsController::class, 'edit'])->name('settings.edit');
-    Route::patch('/settings', [ShopSettingsController::class, 'update'])->name('settings.update');
+    Route::get('/', [ShopSettingsController::class, 'edit'])
+        ->name('settings.edit');
+
+    Route::patch('/', [ShopSettingsController::class, 'update'])
+        ->name('settings.update');
 
 });
 
 /*
 |--------------------------------------------------------------------------
-| Gestión de Canciones
+| Canciones
+|--------------------------------------------------------------------------
+*/
+
+Route::middleware('auth')->prefix('songs')->group(function () {
+
+    Route::get('/', [SongController::class, 'index'])
+        ->name('songs.index');
+
+    Route::post('/', [SongController::class, 'store'])
+        ->name('songs.store');
+
+    Route::delete('/{song}', [SongController::class, 'destroy'])
+        ->name('songs.destroy');
+
+});
+
+/*
+|--------------------------------------------------------------------------
+| Mesas
+|--------------------------------------------------------------------------
+*/
+
+Route::middleware('auth')->prefix('tables')->group(function () {
+
+    Route::get('/', [ServiceTableController::class, 'index'])
+        ->name('tables.index');
+
+    Route::post('/', [ServiceTableController::class, 'store'])
+        ->name('tables.store');
+
+    Route::put('/{table}', [ServiceTableController::class, 'update'])
+        ->name('tables.update');
+
+    Route::delete('/{table}', [ServiceTableController::class, 'destroy'])
+        ->name('tables.destroy');
+
+});
+
+/*
+|--------------------------------------------------------------------------
+| Cola de Karaoke
 |--------------------------------------------------------------------------
 */
 
 Route::middleware(['auth'])->group(function () {
+    Route::get('/queues', [QueueController::class, 'index'])
+        ->name('queues.index');
 
-    Route::get('/songs', [SongController::class, 'index'])->name('songs.index');
-    Route::post('/songs', [SongController::class, 'store'])->name('songs.store');
-    Route::delete('/songs/{song}', [SongController::class, 'destroy'])->name('songs.destroy');
+    Route::post('/queues', [QueueController::class, 'store'])
+        ->name('queues.store');
 
-});
-
-/*
-|--------------------------------------------------------------------------
-| Gestión de Mesas
-|--------------------------------------------------------------------------
-*/
-
-Route::middleware(['auth'])->group(function () {
-
-    Route::get('/tables', [ServiceTableController::class, 'index'])->name('tables.index');
-    Route::post('/tables', [ServiceTableController::class, 'store'])->name('tables.store');
-    Route::put('/tables/{table}', [ServiceTableController::class, 'update'])->name('tables.update');
-    Route::delete('/tables/{table}', [ServiceTableController::class, 'destroy'])->name('tables.destroy');
-
-});
-
-/*
-|--------------------------------------------------------------------------
-| Gestión de Cola de Karaoke
-|--------------------------------------------------------------------------
-*/
-
-Route::middleware(['auth', 'verified'])->group(function () {
-
-    Route::get('/queues', [QueueController::class, 'index'])->name('queues.index');
-
-    Route::patch('/queues/{queue}/update-status', [QueueController::class, 'updateStatus'])
+    Route::patch('/queues/{queue}/status', [QueueController::class, 'updateStatus'])
         ->name('queues.update-status');
+});
 
-    Route::delete('/queues/{queue}', [QueueController::class, 'destroy'])
-        ->name('queues.destroy');
+/*
+|--------------------------------------------------------------------------
+| API INTERNA (REALTIME)
+|--------------------------------------------------------------------------
+*/
+
+Route::prefix('api')->group(function () {
+
+    // Obtener cola en tiempo real
+    Route::get('/queues/{user}', [QueueController::class, 'apiQueues'])
+        ->name('api.queues');
 
 });
 
 /*
 |--------------------------------------------------------------------------
-| Portal del Cliente (QR de Mesa)
+| Portal Cliente (QR Mesa)
 |--------------------------------------------------------------------------
 */
 
 Route::prefix('m/{identifier}')->group(function () {
 
-    // Menú principal
     Route::get('/', [CustomerController::class, 'showMenu'])
         ->name('customer.menu');
 
-    // Buscador de canciones
     Route::get('/cantar', [CustomerController::class, 'showSongSearch'])
         ->name('customer.songs');
 
-    // API búsqueda
     Route::get('/search-api', [CustomerController::class, 'searchSongs'])
         ->name('customer.songs.search');
 
-    // Guardar canción en cola
     Route::post('/request-song', [CustomerController::class, 'storeSong'])
         ->name('customer.songs.store');
 
@@ -124,24 +152,29 @@ Route::prefix('m/{identifier}')->group(function () {
 
 /*
 |--------------------------------------------------------------------------
-| Stage / Pantalla de Proyección (TV)
+| Pantalla Stage (TV)
 |--------------------------------------------------------------------------
 */
 
-Route::get('/stage/{user}', [StageController::class, 'show'])
-    ->name('stage.show');
+Route::prefix('stage')->group(function () {
 
-/* API para la TV (auto refresh) */
-Route::get('/stage/{user}/current', [StageController::class, 'current'])
-    ->name('stage.current');
+    // Vista del escenario
+    Route::get('/{user}', [StageController::class, 'show'])
+        ->name('stage.show');
 
-/* finalizar canción desde la TV */
-Route::post('/stage/{queue}/finish', [StageController::class, 'finish'])
-    ->name('stage.finish');
+    // API canción actual
+    Route::get('/{user}/current', [StageController::class, 'current'])
+        ->name('stage.current');
+
+    // finalizar canción
+    Route::post('/{queue}/finish', [StageController::class, 'finish'])
+        ->name('stage.finish');
+
+});
 
 /*
 |--------------------------------------------------------------------------
-| Perfil de Usuario
+| Perfil
 |--------------------------------------------------------------------------
 */
 

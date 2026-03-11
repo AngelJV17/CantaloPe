@@ -1,283 +1,537 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+
+import { ref, onMounted, onBeforeUnmount } from "vue"
+import axios from "axios"
 
 const props = defineProps({
-    current: {
-        type: Object,
-        default: () => ({
-            customer_name: 'ANGEL',
-            service_table: { identifier: 'M-05' },
-            song: { title: 'MARIPOSA TRAICIONERA (VERSIÓN)', artist: 'MANÁ', youtube_id: 'dQw4w9WgXcQ' }
-        })
-    },
-    next: {
-        type: Object,
-        default: () => ({
-            customer_name: 'LUIS',
-            song: { title: 'CUATRO MENTIRAS', artist: 'CORAZÓN SERRANO' }
-        })
-    },
-    settings: {
-        type: Object,
-        default: () => ({
-            local_name: 'PISO 2',
-            primary_color: '#00f2ff', // Cyan vibrante
-            accent_color: '#7000ff'   // Púrpura neón
-        })
-    }
-});
+    current: Object,
+    next: Object,
+    settings: Object
+})
 
-const player = ref(null);
-const isReady = ref(false);
+const playerA = ref(null)
+const playerB = ref(null)
 
-const initYouTube = () => {
-    if (!props.current?.song?.youtube_id) return;
+const activePlayer = ref("A")
 
-    if (window.YT && window.YT.Player) {
-        if (player.value) {
-            try { player.value.destroy(); } catch (e) { console.error(e); }
+const currentSong = ref(props.current)
+const nextSong = ref(props.next)
+
+const transitionSong = ref(null)
+const showTransition = ref(false)
+
+let isTransitioning = false
+let progressTimer = null
+let channel = null
+
+const ANNOUNCE_BEFORE_END = 3
+
+/*
+|--------------------------------------------------------------------------
+| YOUTUBE PLAYERS
+|--------------------------------------------------------------------------
+*/
+
+function createPlayers() {
+
+    playerA.value = new YT.Player("youtube-player-a", {
+        height: "100%",
+        width: "100%",
+        videoId: currentSong.value?.song?.youtube_id ?? null,
+        playerVars: {
+            autoplay: 1,
+            controls: 0,
+            modestbranding: 1,
+            rel: 0,
+            fs: 0,
+            disablekb: 1,
+            iv_load_policy: 3,
+            playsinline: 1,
+            origin: window.location.origin
+        },
+        events: {
+            onStateChange: onPlayerStateChange
+        }
+    })
+
+    playerB.value = new YT.Player("youtube-player-b", {
+        height: "100%",
+        width: "100%",
+        playerVars: {
+            autoplay: 0,
+            controls: 0
+        }
+    })
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| PROGRESS WATCHER
+|--------------------------------------------------------------------------
+*/
+
+function startProgressWatcher() {
+
+    clearInterval(progressTimer)
+
+    progressTimer = setInterval(() => {
+
+        const player =
+            activePlayer.value === "A"
+                ? playerA.value
+                : playerB.value
+
+        if (!player) return
+
+        const duration = player.getDuration()
+        const current = player.getCurrentTime()
+
+        if (!duration) return
+
+        const remaining = duration - current
+
+        if (remaining <= ANNOUNCE_BEFORE_END && !showTransition.value) {
+            handleSongEnd()
         }
 
-        player.value = new window.YT.Player('youtube-player', {
-            height: '100%',
-            width: '100%',
-            videoId: props.current.song.youtube_id,
-            playerVars: {
-                autoplay: 1,
-                controls: 0,
-                modestbranding: 1,
-                rel: 0,
-                showinfo: 0,
-                iv_load_policy: 3,
-                disablekb: 1,
-                loop: 1,
-                playlist: props.current.song.youtube_id
-            },
-            events: {
-                onReady: () => { isReady.value = true; },
-            }
-        });
+    }, 500)
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| PLAYER EVENTS
+|--------------------------------------------------------------------------
+*/
+
+function onPlayerStateChange(event) {
+
+    if (event.data === YT.PlayerState.PLAYING) {
+        startProgressWatcher()
     }
-};
+
+    if (event.data === YT.PlayerState.ENDED) {
+        event.target.clearVideo()
+    }
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| SONG END FLOW
+|--------------------------------------------------------------------------
+*/
+
+async function handleSongEnd() {
+
+    if (isTransitioning) return
+
+    isTransitioning = true
+
+    transitionSong.value = nextSong.value ?? currentSong.value
+    showTransition.value = true
+
+    clearInterval(progressTimer)
+
+    setTimeout(async () => {
+
+        await finishSong()
+
+        switchPlayers()
+
+        setTimeout(() => {
+
+            showTransition.value = false
+            transitionSong.value = null
+            isTransitioning = false
+
+        }, 800)
+
+    }, 3500)
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| FINISH SONG
+|--------------------------------------------------------------------------
+*/
+
+async function finishSong() {
+
+    if (!currentSong.value?.id) return
+
+    const { data } = await axios.post(`/stage/${currentSong.value.id}/finish`)
+
+    if (!data?.success) return
+
+    currentSong.value = data.current
+    nextSong.value = data.next
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| SWITCH PLAYER
+|--------------------------------------------------------------------------
+*/
+
+function switchPlayers() {
+
+    if (!currentSong.value?.song?.youtube_id) return
+
+    const video = currentSong.value.song.youtube_id
+
+    if (activePlayer.value === "A") {
+
+        playerB.value.loadVideoById(video)
+
+        activePlayer.value = "B"
+
+        setTimeout(() => {
+            playerB.value.playVideo()
+        }, 150)
+
+        preloadNext(playerA.value)
+
+    } else {
+
+        playerA.value.loadVideoById(video)
+
+        activePlayer.value = "A"
+
+        setTimeout(() => {
+            playerA.value.playVideo()
+        }, 150)
+
+        preloadNext(playerB.value)
+
+    }
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| PRELOAD NEXT SONG
+|--------------------------------------------------------------------------
+*/
+
+function preloadNext(player) {
+
+    if (!nextSong.value?.song?.youtube_id) return
+
+    player.cueVideoById({
+        videoId: nextSong.value.song.youtube_id
+    })
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| REALTIME LISTENER (REVERB)
+|--------------------------------------------------------------------------
+*/
+
+function initRealtime() {
+
+    if (!window.Echo) {
+        console.error("Echo no disponible")
+        return
+    }
+
+    channel = window.Echo.private(`karaoke.${props.settings.user_id}`)
+
+    channel.listen(".queue.updated", (event) => {
+
+        console.log("Realtime QueueUpdated:", event)
+
+        const playing = event.fullQueue.find(q => q.status === "playing")
+        const next = event.fullQueue.find(q => q.status === "pending" || q.status === "ready")
+
+        if (playing) {
+
+            const newVideo = playing?.song?.youtube_id
+            const currentVideo = currentSong.value?.song?.youtube_id
+
+            currentSong.value = playing
+            nextSong.value = next
+
+            if (newVideo && newVideo !== currentVideo) {
+                switchPlayers()
+            }
+
+        }
+
+        if (next) {
+            nextSong.value = next
+        }
+
+    })
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| YOUTUBE API
+|--------------------------------------------------------------------------
+*/
+
+function initYouTube() {
+
+    createPlayers()
+
+    if (nextSong.value) {
+        preloadNext(playerB.value)
+    }
+
+}
+
+function loadYouTubeAPI() {
+
+    if (window.YT) {
+        initYouTube()
+        return
+    }
+
+    const tag = document.createElement("script")
+    tag.src = "https://www.youtube.com/iframe_api"
+
+    document.body.appendChild(tag)
+
+    window.onYouTubeIframeAPIReady = initYouTube
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| LIFECYCLE
+|--------------------------------------------------------------------------
+*/
 
 onMounted(() => {
-    if (!window.YT) {
-        const tag = document.createElement('script');
-        tag.src = "https://www.youtube.com/iframe_api";
-        const firstScriptTag = document.getElementsByTagName('script')[0];
-        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-        window.onYouTubeIframeAPIReady = initYouTube;
-    } else {
-        initYouTube();
-    }
-});
+
+    loadYouTubeAPI()
+    initRealtime()
+
+})
 
 onBeforeUnmount(() => {
-    if (player.value) player.value.destroy();
-});
 
-// Estilo de sombra de alto contraste para textos de color
-const highContrastShadow = computed(() => ({
-    textShadow: `
-        -2px -2px 0 #000,  
-         2px -2px 0 #000,
-        -2px  2px 0 #000,
-         2px  2px 0 #000,
-         0px  4px 10px rgba(0,0,0,0.8)
-    `
-}));
+    if (playerA.value) playerA.value.destroy()
+    if (playerB.value) playerB.value.destroy()
+
+    if (window.Echo) {
+        window.Echo.leave(`karaoke.${props.settings.user_id}`)
+    }
+
+})
+
 </script>
 
 <template>
-    <div class="fixed inset-0 bg-black text-white flex flex-col overflow-hidden font-sans select-none">
+    <div class="fixed inset-0 bg-black flex flex-col overflow-hidden font-sans select-none cursor-none text-white">
 
-        <!-- HEADER: ESTILO BROADCAST -->
-        <div
-            class="absolute top-0 left-0 right-0 z-50 p-8 flex justify-between items-start bg-gradient-to-b from-black/90 via-black/40 to-transparent">
-            <div class="flex gap-4 items-center">
-                <div class="flex flex-col border-l-4 pl-4" :style="{ borderColor: settings.primary_color }">
-                    <span class="text-[10px] tracking-[0.4em] font-black text-zinc-400 uppercase">Karaoke Live</span>
-                    <span
-                        class="text-4xl font-black tracking-tighter italic uppercase drop-shadow-[0_2px_2px_rgba(0,0,0,1)]">
-                        {{ settings.local_name }}
-                    </span>
-                </div>
+        <!-- SECCIÓN SUPERIOR: REPRODUCTOR DE VIDEO -->
+        <div class="relative flex-grow bg-black overflow-hidden">
+            <div id="youtube-player-a" class="absolute inset-0 transition-opacity duration-700"
+                :class="activePlayer === 'A' ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+            </div>
+            <div id="youtube-player-b" class="absolute inset-0 transition-opacity duration-700"
+                :class="activePlayer === 'B' ? 'opacity-100' : 'opacity-0 pointer-events-none'">
             </div>
 
+            <!-- Interstitial de Próximo Turno -->
+            <Transition enter-active-class="transition duration-500 ease-out" enter-from-class="opacity-0 scale-95"
+                enter-to-class="opacity-100 scale-100" leave-active-class="transition duration-500 ease-in"
+                leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+                <div v-if="showTransition"
+                    class="absolute inset-0 z-[9999] flex items-center justify-center bg-black/95 backdrop-blur-sm overflow-hidden">
+
+                    <!-- LUCES DE ESCENARIO -->
+                    <div class="absolute inset-0 stage-lights"></div>
+
+                    <div class="relative text-center z-10">
+
+                        <p class="text-amber-400 text-xl font-black uppercase tracking-[0.35em] mb-8 animate-pulse">
+                            Siguiente en el Escenario
+                        </p>
+
+                        <!-- NOMBRE -->
+                        <h1 class="text-[140px] font-black uppercase tracking-tight text-white drop-shadow-[0_0_60px_rgba(255,255,255,0.9)]">
+                            {{ transitionSong?.customer_name }}
+                        </h1>
+
+                        <!-- MESA -->
+                        <div class="mt-6 text-4xl text-white/90 italic tracking-wide">
+                            Mesa {{ transitionSong?.service_table?.identifier }}
+                        </div>
+
+                        <!-- CANCIÓN -->
+                        <div class="mt-6 text-3xl text-white/80 italic">
+                            "{{ transitionSong?.song?.title }}"
+                        </div>
+
+                        <!-- APLAUSOS -->
+                        <div class="mt-12 text-6xl applause">
+                            👏 👏 👏
+                        </div>
+                    </div>
+                </div>
+            </Transition>
+        </div>
+
+        <!-- SECCIÓN INFERIOR: FOOTER & BANNER -->
+        <div v-if="!showTransition" class="flex flex-col z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.8)]">
+
+            <!-- CONTENEDOR PRINCIPAL DEL FOOTER (HUD) -->
+            <div class="h-28 bg-[#0a0a0a] border-t border-white/5 flex items-center px-10 relative">
+
+                <!-- Barra de progreso de transición -->
+                <div v-if="showTransition" class="absolute top-0 left-0 w-full h-1 bg-white/5 overflow-hidden">
+                    <div class="h-full bg-amber-600 animate-[shrink_5s_linear_forwards] origin-left"></div>
+                </div>
+
+                <!-- Info Cantante Actual -->
+                <div class="flex items-center gap-8 flex-1">
+                    <div class="flex flex-col">
+                        <span
+                            class="text-amber-500 text-[10px] font-black uppercase tracking-widest mb-1 flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-red-600 rounded-full animate-pulse"></span>
+                            En Escena
+                        </span>
+                        <h2 class="text-4xl font-black uppercase tracking-tight leading-none italic">
+                            {{ currentSong?.customer_name }}
+                        </h2>
+                    </div>
+
+                    <div class="h-10 w-px bg-white/10"></div>
+
+                    <div class="flex flex-col min-w-16">
+                        <span class="text-white/40 text-[9px] font-bold uppercase tracking-widest mb-1">Mesa</span>
+                        <span class="text-3xl font-black leading-none text-white/90">{{
+                            currentSong?.service_table?.identifier }}</span>
+                    </div>
+
+                    <div class="h-10 w-px bg-white/10"></div>
+
+                    <div class="flex flex-col max-w-sm">
+                        <span class="text-white/40 text-[9px] font-bold uppercase tracking-widest mb-1">Cantando</span>
+                        <span class="text-xl font-bold italic truncate text-amber-100/70">"{{ currentSong?.song?.title
+                        }}"</span>
+                    </div>
+                </div>
+
+                <!-- Info Próximo -->
+                <div v-if="nextSong"
+                    class="flex items-center gap-5 bg-white/5 px-5 py-2.5 rounded-xl border border-white/5">
+                    <div class="text-right">
+                        <span
+                            class="text-white/30 text-[9px] font-black uppercase tracking-widest block mb-0.5">Siguiente</span>
+                        <span class="text-lg font-bold">{{ nextSong?.customer_name }}</span>
+                    </div>
+                    <div
+                        class="w-9 h-9 rounded-full bg-amber-600/10 border border-amber-600/30 flex items-center justify-center">
+                        <span class="text-amber-500 font-black text-xs">{{ nextSong?.service_table?.identifier }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- BANNER INFERIOR EN MOVIMIENTO (TICKER) -->
+        <div class="h-7 bg-amber-600/95 overflow-hidden flex items-center border-t border-amber-400/20">
             <div
-                class="flex items-center gap-4 bg-black/80 backdrop-blur-xl px-5 py-2.5 rounded-2xl border border-white/20 shadow-2xl">
-                <div class="relative flex h-3 w-3">
-                    <span
-                        class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-red-500"></span>
-                    <span class="relative inline-flex rounded-full h-3 w-3 bg-red-600"></span>
-                </div>
-                <span class="text-xs font-black uppercase tracking-[0.2em] text-white">En Vivo</span>
-            </div>
-        </div>
-
-        <!-- AREA CENTRAL: VIDEO -->
-        <div class="flex-1 relative overflow-hidden bg-zinc-900">
-            <div id="youtube-player" class="absolute inset-0 w-full h-full scale-[1.05]"></div>
-            <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-90 z-10">
-            </div>
-        </div>
-
-        <!-- FOOTER: INFO DEL CANTANTE -->
-        <div
-            class="h-44 bg-[#050505] relative z-20 grid grid-cols-12 border-t border-white/10 shadow-[0_-20px_50px_rgba(0,0,0,0.5)]">
-
-            <!-- PANEL IZQUIERDO: CANTANTE ACTUAL -->
-            <div class="col-span-8 flex items-center px-10 gap-8 relative overflow-hidden">
-                <!-- Marca de agua de mesa -->
-                <div
-                    class="absolute -left-4 top-0 bottom-0 flex items-center justify-center opacity-[0.05] pointer-events-none">
-                    <span class="text-[14rem] font-black italic">{{ current?.service_table?.identifier || '00' }}</span>
-                </div>
-
-                <!-- Card de Mesa con el texto ajustado -->
-                <div
-                    class="relative flex flex-col items-center justify-center min-w-[120px] h-[120px] rounded-3xl border-2 border-white/60 bg-neutral-900 shadow-2xl overflow-hidden">
-
-                    <!-- Glow de fondo -->
-                    <div class="absolute inset-0 opacity-20" :style="{ backgroundColor: settings.primary_color }"></div>
-
-                    <div class="relative flex flex-col items-center justify-center">
-                        <span class="text-sm font-black text-white/70 uppercase tracking-[0.3em] mb-1">MESA</span>
-
-                        <!-- EL TEXTO CON BORDE CLARO -->
-                        <span class="text-5xl font-black tracking-tighter m-2"
-                            :style="{ color: settings.accent_color, ...highContrastShadow }">
-                            {{ current?.service_table?.identifier || '--' }}
-                        </span>
-                    </div>
-                </div>
-
-                <!-- Info Cantante -->
-                <div class="flex-1 min-w-0 z-10">
-                    <div class="flex items-center gap-3 mb-1">
-                        <span
-                            class="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-white text-black shadow-lg">
-                            CANTANDO AHORA
-                        </span>
-                        <div class="h-[2px] flex-1 bg-gradient-to-r from-white/40 to-transparent"></div>
-                    </div>
-
-                    <h2
-                        class="text-7xl font-black italic tracking-tighter uppercase truncate leading-[0.9] py-1 drop-shadow-[0_5px_15px_rgba(0,0,0,1)]">
-                        {{ current?.customer_name }}
-                    </h2>
-
-                    <div class="flex items-center gap-2 mt-2">
-                        <div class="bg-zinc-800 px-2 py-1 rounded">
-                            <span class="text-[10px] font-black uppercase text-zinc-400 tracking-widest">TEMA</span>
-                        </div>
-                        <p class="text-xl font-bold text-white uppercase truncate italic drop-shadow-md">
-                            {{ current?.song?.title }}
-                            <span :style="{ color: settings.primary_color }" class="mx-2 font-black">/</span>
-                            <span class="text-zinc-400">{{ current?.song?.artist }}</span>
-                        </p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- PANEL DERECHO: PRÓXIMO -->
-            <div class="col-span-4 bg-zinc-900/60 border-l border-white/10 flex flex-col justify-center px-10 relative">
-                <div class="relative z-10">
-                    <div class="flex items-center gap-3 mb-4">
-                        <span class="text-sm font-black uppercase tracking-[0.2em] text-zinc-400">
-                            SIGUIENTE
-                        </span>
-                        <div class="h-[3px] w-12 rounded-full" :style="{ backgroundColor: settings.accent_color }">
-                        </div>
-                    </div>
-                    <div v-if="next" class="space-y-2">
-                        <!-- Mesa del siguiente -->
-                        <div class="flex items-center gap-2">
-                            <span class="text-xs font-bold uppercase tracking-widest text-zinc-500">
-                                Mesa:
-                            </span>
-                            <span class="px-2 py-[2px] rounded-md text-sm font-black tracking-wider" :style="{
-                                backgroundColor: settings.accent_color + '20',
-                                color: settings.accent_color,
-                                boxShadow: `0 0 10px ${settings.accent_color}55`
-                            }">
-                                {{ next?.service_table?.identifier || '--' }}
-                            </span>
-                        </div>
-                        <!-- Nombre -->
-                        <h3
-                            class="text-3xl font-black tracking-tight text-white uppercase italic leading-none drop-shadow-lg">
-                            {{ next.customer_name }}
-                        </h3>
-                        <!-- Canción -->
-                        <p class="text-sm font-bold text-zinc-400 uppercase truncate italic mt-1">
-                            {{ next.song.title }}
-                        </p>
-                    </div>
-                    <div v-else class="text-xs font-bold text-zinc-600 uppercase italic tracking-widest">
-                        Preparando lista...
-                    </div>
-                </div>
-
-                <!-- Decorativo Lateral -->
-                <div
-                    class="absolute right-0 top-0 bottom-0 w-1 bg-gradient-to-b from-transparent via-white/20 to-transparent">
-                </div>
-            </div>
-        </div>
-
-        <!-- TICKER INFERIOR -->
-        <div class="h-10 bg-black flex items-center overflow-hidden border-t-2 border-white/5">
-            <div class="ticker-content flex items-center gap-24 whitespace-nowrap px-10">
-                <div v-for="n in 3" :key="n" class="flex items-center gap-24">
-                    <div class="flex items-center gap-4">
-                        <div class="w-2 h-2 rotate-45" :style="{ backgroundColor: settings.primary_color }"></div>
-                        <span class="text-[12px] font-black uppercase tracking-[0.3em] text-zinc-300">
-                            {{ settings.local_name }} - SONIDO PROFESIONAL
-                        </span>
-                    </div>
-                    <div class="flex items-center gap-4">
-                        <div class="w-2 h-2 rotate-45 bg-white"></div>
-                        <span
-                            class="text-[12px] font-black uppercase tracking-[0.3em] :style='{ color: settings.primary_color }'">
-                            ESCANEA EL QR Y PIDE TU CANCIÓN
-                        </span>
-                    </div>
-                </div>
+                class="whitespace-nowrap flex animate-marquee text-black font-black uppercase italic tracking-widest text-xs">
+                <span class="px-10">HAZ TU PEDIDO ESCANEANDO EL QR DE TU MESA</span>
+                <span class="px-10">HAZ TU PEDIDO ESCANEANDO EL QR DE TU MESA</span>
+                <span class="px-10">HAZ TU PEDIDO ESCANEANDO EL QR DE TU MESA</span>
+                <span class="px-10">HAZ TU PEDIDO ESCANEANDO EL QR DE TU MESA</span>
+                <span class="px-10">HAZ TU PEDIDO ESCANEANDO EL QR DE TU MESA</span>
             </div>
         </div>
     </div>
 </template>
 
-<style scoped>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@700;900&display=swap');
+<style>
+@keyframes shrink {
+    from {
+        transform: scaleX(1);
+    }
 
-.font-sans {
-    font-family: 'Inter', sans-serif !important;
+    to {
+        transform: scaleX(0);
+    }
 }
 
-#youtube-player :deep(iframe) {
-    pointer-events: none;
-    border: none;
-}
-
-@keyframes ticker {
+@keyframes marquee {
     0% {
         transform: translateX(0);
     }
 
     100% {
-        transform: translateX(-50%);
+        transform: translateX(-20%);
+    }
+
+    /* Ajustado según el número de repeticiones para que sea infinito fluido */
+}
+
+.animate-marquee {
+    animation: marquee 15s linear infinite;
+}
+
+/* Ocultar cursor en toda la app */
+.cursor-none {
+    cursor: none !important;
+}
+
+/* Evitar interacción con el iframe de YouTube */
+#youtube-player-a iframe,
+#youtube-player-b iframe {
+    pointer-events: none;
+}
+
+@keyframes stageLights {
+
+    0% {
+        opacity: 0.1;
+        transform: rotate(0deg);
+    }
+
+    50% {
+        opacity: 0.6;
+        transform: rotate(5deg);
+    }
+
+    100% {
+        opacity: 0.1;
+        transform: rotate(0deg);
+    }
+
+}
+
+.stage-lights {
+    background:
+        radial-gradient(circle at 20% 50%, rgba(255, 200, 0, 0.25), transparent 40%),
+        radial-gradient(circle at 80% 50%, rgba(255, 0, 150, 0.25), transparent 40%),
+        radial-gradient(circle at 50% 20%, rgba(0, 200, 255, 0.25), transparent 40%);
+    animation: stageLights 4s ease-in-out infinite;
+}
+
+@keyframes applause {
+    0% {
+        transform: scale(1)
+    }
+
+    50% {
+        transform: scale(1.2)
+    }
+
+    100% {
+        transform: scale(1)
     }
 }
 
-.ticker-content {
-    animation: ticker 40s linear infinite;
-}
-
-/* Forzar ocultamiento de elementos de pausa de YT */
-:deep(.ytp-pause-overlay),
-:deep(.ytp-expand-pause-overlay) {
-    display: none !important;
+.applause {
+    animation: applause 0.6s ease-in-out infinite alternate;
 }
 </style>

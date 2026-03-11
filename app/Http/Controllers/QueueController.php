@@ -1,6 +1,7 @@
 <?php
 namespace App\Http\Controllers;
 
+use App\Events\QueueUpdated;
 use App\Models\Queue;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -12,8 +13,9 @@ class QueueController extends Controller
     public function index()
     {
         $queues = Queue::with(['song', 'serviceTable'])
+            ->where('user_id', Auth::id())
             ->whereIn('status', ['pending', 'ready', 'playing'])
-            ->orderBy('order_index', 'asc')
+            ->orderBy('order_index')
             ->get();
 
         return Inertia::render('Queues/Index', [
@@ -32,9 +34,8 @@ class QueueController extends Controller
         ]);
 
         DB::transaction(function () use ($validated) {
-
-            Queue::create([
-                'user_id'          => Auth::id(), // ✔ forma recomendada
+            $queue = Queue::create([
+                'user_id'          => Auth::id(),
                 'service_table_id' => $validated['service_table_id'],
                 'song_id'          => $validated['song_id'],
                 'customer_name'    => $validated['customer_name'],
@@ -45,9 +46,10 @@ class QueueController extends Controller
             ]);
 
             $this->reorderQueue();
+            $this->broadcastQueue($queue);
         });
 
-        return back()->with('success', 'Canción agregada a la cola');
+        return back();
     }
 
     public function updateStatus(Request $request, Queue $queue)
@@ -58,20 +60,17 @@ class QueueController extends Controller
 
         DB::transaction(function () use ($queue, $validated) {
 
-            // Si se está reproduciendo una canción
             if ($validated['status'] === 'playing') {
-
-                // terminar cualquier otra que esté reproduciéndose
                 Queue::where('status', 'playing')
                     ->update(['status' => 'played']);
+
             }
 
             $queue->update([
                 'status' => $validated['status'],
             ]);
-
-            // Reordenar la cola después de cambios
             $this->reorderQueue();
+            $this->broadcastQueue($queue);
         });
 
         return back();
@@ -79,10 +78,11 @@ class QueueController extends Controller
 
     protected function reorderQueue()
     {
-        $items = Queue::whereIn('status', ['pending', 'ready'])
+        $items = Queue::where('user_id', Auth::id())
+            ->whereIn('status', ['pending', 'ready'])
             ->orderByDesc('is_vip')
             ->orderByDesc('amount_paid')
-            ->orderBy('created_at', 'asc')
+            ->orderBy('created_at')
             ->get();
 
         foreach ($items as $index => $item) {
@@ -92,14 +92,15 @@ class QueueController extends Controller
         }
     }
 
-    public function stage()
+    protected function broadcastQueue($queue)
     {
-        $current = Queue::with('song')
-            ->where('status', 'playing')
-            ->first();
+        $fullQueue = Queue::with(['song', 'serviceTable'])
+            ->where('user_id', Auth::id())
+            ->whereIn('status', ['pending', 'ready', 'playing'])
+            ->orderBy('order_index')
+            ->get()
+            ->toArray();
 
-        return Inertia::render('Stage/Show', [
-            'current' => $current,
-        ]);
+        broadcast(new QueueUpdated($queue, $fullQueue));
     }
 }

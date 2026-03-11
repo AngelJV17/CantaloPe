@@ -1,30 +1,24 @@
 <?php
 namespace App\Http\Controllers;
 
+use App\Events\QueueUpdated;
 use App\Models\Queue;
 use App\Models\Setting;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class StageController extends Controller
 {
-    /**
-     * Pantalla principal del escenario (TV)
-     */
     public function show(User $user)
     {
-
-        // Configuración del karaoke
         $settings = Setting::where('user_id', $user->id)->first();
 
-        // Canción actual
         $current = Queue::with(['song', 'serviceTable'])
             ->where('user_id', $user->id)
             ->where('status', 'playing')
-            ->orderBy('order_index')
             ->first();
 
-        // Próxima canción
         $next = Queue::with(['song', 'serviceTable'])
             ->where('user_id', $user->id)
             ->whereIn('status', ['pending', 'ready'])
@@ -36,45 +30,60 @@ class StageController extends Controller
             'next'     => $next,
             'settings' => $settings,
         ]);
+
     }
 
-    /**
-     * API para que la TV consulte la canción actual
-     */
-    public function current(User $user)
-    {
-        $current = Queue::with('song')
-            ->where('user_id', $user->id)
-            ->where('status', 'playing')
-            ->orderBy('order_index')
-            ->first();
-
-        return response()->json($current);
-    }
-
-    /**
-     * Finalizar canción actual
-     * y activar la siguiente automáticamente
-     */
     public function finish(Queue $queue)
     {
-        $queue->update([
-            'status' => 'played',
-        ]);
+        $result = DB::transaction(function () use ($queue) {
 
-        $next = Queue::where('user_id', $queue->user_id)
-            ->where('status', 'pending')
-            ->orderBy('order_index')
-            ->first();
-
-        if ($next) {
-            $next->update([
-                'status' => 'playing',
+            $queue->update([
+                'status' => 'played',
             ]);
-        }
+
+            $current = Queue::with(['song', 'serviceTable'])
+                ->where('user_id', $queue->user_id)
+                ->whereIn('status', ['pending', 'ready'])
+                ->orderBy('order_index')
+                ->first();
+
+            if ($current) {
+                $current->update([
+                    'status' => 'playing',
+                ]);
+            }
+
+            $next = null;
+
+            if ($current) {
+                $next = Queue::with(['song', 'serviceTable'])
+                    ->where('user_id', $queue->user_id)
+                    ->where('status', 'pending')
+                    ->orderBy('order_index')
+                    ->first();
+            }
+
+            // 🔹 cola completa para realtime
+            $fullQueue = Queue::with(['song', 'serviceTable'])
+                ->where('user_id', $queue->user_id)
+                ->whereIn('status', ['pending', 'ready', 'playing'])
+                ->orderBy('order_index')
+                ->get()
+                ->toArray();
+
+            // 🔹 broadcast correcto
+            broadcast(new QueueUpdated($current ?? $queue, $fullQueue));
+
+            return [
+                'current' => $current,
+                'next'    => $next,
+            ];
+        });
 
         return response()->json([
             'success' => true,
+            'current' => $result['current'],
+            'next'    => $result['next'],
         ]);
     }
 }

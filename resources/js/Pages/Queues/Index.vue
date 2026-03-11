@@ -1,59 +1,112 @@
 <script setup>
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, router, usePage } from '@inertiajs/vue3';
-import {
-    Play, CheckCircle2, Star, Music,
-    User2, Mic2, Flame
-} from 'lucide-vue-next';
-import { computed, ref } from 'vue';
+
+import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
+import { Head, router, usePage } from '@inertiajs/vue3'
+import { Play, CheckCircle2, Star, Music, User2, Mic2, Flame } from 'lucide-vue-next'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
     queues: Array
-});
+})
 
-const page = usePage();
-const settings = computed(() => page.props.auth.settings);
-const userId = computed(() => page.props.auth.user.id);
+const page = usePage()
+
+const settings = computed(() => page.props?.auth?.settings ?? {})
+const userId = computed(() => page.props?.auth?.user?.id ?? null)
+
+const stageWindow = ref(null)
+const queues = ref([...props.queues])
+
+let channel = null
 
 /*
-Controlamos si ya se abrió la pantalla
-para no abrir varias ventanas
+|--------------------------------------------------------------------------
+| REALTIME LISTENER
+|--------------------------------------------------------------------------
 */
-const stageWindow = ref(null);
 
-/**
- * Iniciar reproducción
- */
+onMounted(() => {
+
+    if (!window.Echo || !userId.value) {
+        console.warn("Echo o userId no disponible")
+        return
+    }
+
+    channel = window.Echo.private(`karaoke.${userId.value}`)
+
+    channel.listen('.queue.updated', (e) => {
+
+        console.log("Realtime QueueUpdated:", e)
+
+        if (!e.fullQueue) return
+
+        // fuerza reactividad profunda
+        queues.value = [...e.fullQueue]
+
+    })
+
+})
+
+onBeforeUnmount(() => {
+
+    if (window.Echo && userId.value) {
+        window.Echo.leave(`karaoke.${userId.value}`)
+    }
+
+})
+
+/*
+|--------------------------------------------------------------------------
+| PLAY SONG
+|--------------------------------------------------------------------------
+*/
+
 const playSong = (id) => {
-    router.patch(route('queues.update-status', id), {
-        status: 'playing'
-    }, {
-        preserveScroll: true,
-        onSuccess: () => {
-            /*
-            Abrimos la pantalla de proyección
-            SOLO la primera vez
-            */
-            if (!stageWindow.value || stageWindow.value.closed) {
-                stageWindow.value = window.open(
-                    `/stage/${userId.value}`,
-                    'karaoke_stage',
-                    'width=1280,height=720'
-                )
-            } else {
-                stageWindow.value.focus()
+
+    router.patch(
+        route('queues.update-status', id),
+        { status: 'playing' },
+        {
+            preserveScroll: true,
+
+            onSuccess: () => {
+
+                if (!stageWindow.value || stageWindow.value.closed) {
+
+                    stageWindow.value = window.open(
+                        `/stage/${userId.value}`,
+                        'karaoke_stage',
+                        'width=1280,height=720'
+                    )
+
+                } else {
+
+                    stageWindow.value.focus()
+
+                }
+
             }
         }
-    })
+    )
+
 }
 
+/*
+|--------------------------------------------------------------------------
+| FINISH SONG
+|--------------------------------------------------------------------------
+*/
+
 const finishSong = (id) => {
-    router.patch(route('queues.update-status', id), {
-        status: 'played'
-    }, {
-        preserveScroll: true
-    })
+
+    router.patch(
+        route('queues.update-status', id),
+        { status: 'played' },
+        { preserveScroll: true }
+    )
+
 }
+
 </script>
 
 <template>
