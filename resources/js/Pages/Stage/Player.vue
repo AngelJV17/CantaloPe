@@ -1,40 +1,182 @@
 <script setup>
-
-import { ref, onMounted, onBeforeUnmount } from "vue"
+import { ref, onMounted, onBeforeUnmount, watch, computed } from "vue"
 import axios from "axios"
 
 const props = defineProps({
     current: Object,
     next: Object,
-    settings: Object
+    settings: Object,
+    ownerId: Number
 })
 
-const playerA = ref(null)
-const playerB = ref(null)
+const player = ref(null)
 
-const activePlayer = ref("A")
+const currentSong = ref(props.current ?? null)
+const nextSong = ref(props.next ?? null)
 
-const currentSong = ref(props.current)
-const nextSong = ref(props.next)
+const playerReady = ref(false)
+const highlightNext = ref(false)
 
-const transitionSong = ref(null)
-const showTransition = ref(false)
+const stageMode = ref("idle")
+// idle | thanks | announce | countdown | waiting
 
-let isTransitioning = false
+const countdown = ref(3)
+const transitionCurrentSong = ref(null)
+const transitionNextSong = ref(null)
+
 let progressTimer = null
 let channel = null
+let isTransitioning = false
+let isLocalTransition = false
+let countdownTimer = null
+let phaseTimer = null
 
-const ANNOUNCE_BEFORE_END = 3
+const CUT_BEFORE_END_SECONDS = 3
+const THANKS_DURATION = 1800
+const ANNOUNCE_DURATION = 1800
 
 /*
 |--------------------------------------------------------------------------
-| YOUTUBE PLAYERS
+| COMPUTED
 |--------------------------------------------------------------------------
 */
 
-function createPlayers() {
+const channelOwnerId = computed(() => props.ownerId ?? props.settings?.user_id ?? null)
+const isOverlayVisible = computed(() => ["thanks", "announce", "countdown", "waiting"].includes(stageMode.value))
 
-    playerA.value = new YT.Player("youtube-player-a", {
+/*
+|--------------------------------------------------------------------------
+| HELPERS
+|--------------------------------------------------------------------------
+*/
+
+function clearProgressWatcher() {
+    if (progressTimer) {
+        clearInterval(progressTimer)
+        progressTimer = null
+    }
+}
+
+function clearPhaseTimer() {
+    if (phaseTimer) {
+        clearTimeout(phaseTimer)
+        phaseTimer = null
+    }
+}
+
+function clearCountdownTimer() {
+    if (countdownTimer) {
+        clearInterval(countdownTimer)
+        countdownTimer = null
+    }
+}
+
+function clearAllTimers() {
+    clearProgressWatcher()
+    clearPhaseTimer()
+    clearCountdownTimer()
+}
+
+function stopPlayer() {
+    try {
+        if (player.value && typeof player.value.stopVideo === "function") {
+            player.value.stopVideo()
+        }
+    } catch (error) {
+        console.error("Error deteniendo reproductor:", error)
+    }
+}
+
+function loadCurrentVideo() {
+    if (!player.value) return
+    if (!currentSong.value?.song?.youtube_id) return
+
+    try {
+        player.value.loadVideoById({
+            videoId: currentSong.value.song.youtube_id,
+            startSeconds: 0
+        })
+    } catch (error) {
+        console.error("Error cargando video actual:", error)
+    }
+}
+
+function triggerNextHighlight() {
+    highlightNext.value = true
+
+    setTimeout(() => {
+        highlightNext.value = false
+    }, 2200)
+}
+
+/*
+|--------------------------------------------------------------------------
+| YOUTUBE EVENTS
+|--------------------------------------------------------------------------
+*/
+
+function startProgressWatcher() {
+    clearProgressWatcher()
+
+    progressTimer = setInterval(() => {
+        if (!player.value) return
+        if (typeof player.value.getDuration !== "function") return
+
+        const duration = player.value.getDuration()
+        const currentTime = player.value.getCurrentTime()
+
+        if (!duration || currentTime == null) return
+
+        const remaining = duration - currentTime
+
+        if (
+            remaining <= CUT_BEFORE_END_SECONDS &&
+            remaining > 0 &&
+            !isTransitioning &&
+            stageMode.value === "idle"
+        ) {
+            startStageFlow()
+        }
+    }, 500)
+}
+
+function onPlayerReady() {
+    playerReady.value = true
+
+    if (!currentSong.value?.song?.youtube_id) {
+        stageMode.value = "waiting"
+    }
+}
+
+function onPlayerStateChange(event) {
+    if (event.data === YT.PlayerState.PLAYING) {
+        startProgressWatcher()
+        stageMode.value = "idle"
+    }
+
+    if (event.data === YT.PlayerState.ENDED) {
+        if (!isTransitioning) {
+            startStageFlow()
+        }
+    }
+}
+
+function onPlayerError(event) {
+    console.error("YouTube Player Error:", event.data, currentSong.value)
+
+    if (!isTransitioning) {
+        startStageFlow()
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| PLAYER
+|--------------------------------------------------------------------------
+*/
+
+function createPlayer() {
+    player.value = new YT.Player("youtube-player", {
         height: "100%",
         width: "100%",
         videoId: currentSong.value?.song?.youtube_id ?? null,
@@ -50,225 +192,170 @@ function createPlayers() {
             origin: window.location.origin
         },
         events: {
-            onStateChange: onPlayerStateChange
+            onReady: onPlayerReady,
+            onStateChange: onPlayerStateChange,
+            onError: onPlayerError
         }
     })
-
-    playerB.value = new YT.Player("youtube-player-b", {
-        height: "100%",
-        width: "100%",
-        playerVars: {
-            autoplay: 0,
-            controls: 0
-        }
-    })
-
 }
 
 /*
 |--------------------------------------------------------------------------
-| PROGRESS WATCHER
-|--------------------------------------------------------------------------
-*/
-
-function startProgressWatcher() {
-
-    clearInterval(progressTimer)
-
-    progressTimer = setInterval(() => {
-
-        const player =
-            activePlayer.value === "A"
-                ? playerA.value
-                : playerB.value
-
-        if (!player) return
-
-        const duration = player.getDuration()
-        const current = player.getCurrentTime()
-
-        if (!duration) return
-
-        const remaining = duration - current
-
-        if (remaining <= ANNOUNCE_BEFORE_END && !showTransition.value) {
-            handleSongEnd()
-        }
-
-    }, 500)
-
-}
-
-/*
-|--------------------------------------------------------------------------
-| PLAYER EVENTS
-|--------------------------------------------------------------------------
-*/
-
-function onPlayerStateChange(event) {
-
-    if (event.data === YT.PlayerState.PLAYING) {
-        startProgressWatcher()
-    }
-
-    if (event.data === YT.PlayerState.ENDED) {
-        event.target.clearVideo()
-    }
-
-}
-
-/*
-|--------------------------------------------------------------------------
-| SONG END FLOW
-|--------------------------------------------------------------------------
-*/
-
-async function handleSongEnd() {
-
-    if (isTransitioning) return
-
-    isTransitioning = true
-
-    transitionSong.value = nextSong.value ?? currentSong.value
-    showTransition.value = true
-
-    clearInterval(progressTimer)
-
-    setTimeout(async () => {
-
-        await finishSong()
-
-        switchPlayers()
-
-        setTimeout(() => {
-
-            showTransition.value = false
-            transitionSong.value = null
-            isTransitioning = false
-
-        }, 800)
-
-    }, 3500)
-
-}
-
-/*
-|--------------------------------------------------------------------------
-| FINISH SONG
+| BACKEND
 |--------------------------------------------------------------------------
 */
 
 async function finishSong() {
+    if (!currentSong.value?.id) return false
 
-    if (!currentSong.value?.id) return
+    try {
+        const { data } = await axios.post(`/stage/${currentSong.value.id}/finish`)
 
-    const { data } = await axios.post(`/stage/${currentSong.value.id}/finish`)
+        if (!data?.success) return false
 
-    if (!data?.success) return
+        currentSong.value = data.current ?? null
+        nextSong.value = data.next ?? null
 
-    currentSong.value = data.current
-    nextSong.value = data.next
-
-}
-
-/*
-|--------------------------------------------------------------------------
-| SWITCH PLAYER
-|--------------------------------------------------------------------------
-*/
-
-function switchPlayers() {
-
-    if (!currentSong.value?.song?.youtube_id) return
-
-    const video = currentSong.value.song.youtube_id
-
-    if (activePlayer.value === "A") {
-
-        playerB.value.loadVideoById(video)
-
-        activePlayer.value = "B"
-
-        setTimeout(() => {
-            playerB.value.playVideo()
-        }, 150)
-
-        preloadNext(playerA.value)
-
-    } else {
-
-        playerA.value.loadVideoById(video)
-
-        activePlayer.value = "A"
-
-        setTimeout(() => {
-            playerA.value.playVideo()
-        }, 150)
-
-        preloadNext(playerB.value)
-
+        return true
+    } catch (error) {
+        console.error("Error finalizando canción:", error)
+        return false
     }
-
 }
 
 /*
 |--------------------------------------------------------------------------
-| PRELOAD NEXT SONG
+| STAGE FLOW
 |--------------------------------------------------------------------------
 */
 
-function preloadNext(player) {
+async function startStageFlow() {
+    if (isTransitioning || !currentSong.value?.id) return
 
-    if (!nextSong.value?.song?.youtube_id) return
+    isTransitioning = true
+    isLocalTransition = true
 
-    player.cueVideoById({
-        videoId: nextSong.value.song.youtube_id
-    })
+    transitionCurrentSong.value = currentSong.value
+    transitionNextSong.value = nextSong.value
 
+    clearProgressWatcher()
+    stopPlayer()
+
+    // 1) agradecimiento al que cantó
+    stageMode.value = "thanks"
+
+    phaseTimer = setTimeout(async () => {
+        const ok = await finishSong()
+
+        // actualizamos el siguiente a anunciar con el valor ya más reciente
+        if (nextSong.value) {
+            transitionNextSong.value = currentSong.value
+        }
+
+        // Si después de terminar no hay nuevo current, no hay siguiente.
+        if (!ok || !currentSong.value?.song?.youtube_id) {
+            stageMode.value = "waiting"
+            isTransitioning = false
+            isLocalTransition = false
+            return
+        }
+
+        // 2) anuncio del siguiente
+        stageMode.value = "announce"
+
+        phaseTimer = setTimeout(() => {
+            // 3) conteo regresivo
+            stageMode.value = "countdown"
+            countdown.value = 3
+
+            clearCountdownTimer()
+            countdownTimer = setInterval(() => {
+                countdown.value--
+
+                if (countdown.value <= 0) {
+                    clearCountdownTimer()
+
+                    loadCurrentVideo()
+
+                    setTimeout(() => {
+                        stageMode.value = "idle"
+                        transitionCurrentSong.value = null
+                        transitionNextSong.value = null
+                        isTransitioning = false
+                        isLocalTransition = false
+                    }, 250)
+                }
+            }, 900)
+        }, ANNOUNCE_DURATION)
+    }, THANKS_DURATION)
 }
 
 /*
 |--------------------------------------------------------------------------
-| REALTIME LISTENER (REVERB)
+| REALTIME
 |--------------------------------------------------------------------------
 */
 
 function initRealtime() {
-
     if (!window.Echo) {
         console.error("Echo no disponible")
         return
     }
 
-    channel = window.Echo.private(`karaoke.${props.settings.user_id}`)
+    if (!channelOwnerId.value) {
+        console.error("ownerId no disponible para realtime")
+        return
+    }
+
+    channel = window.Echo.private(`karaoke.${channelOwnerId.value}`)
 
     channel.listen(".queue.updated", (event) => {
-
         console.log("Realtime QueueUpdated:", event)
 
-        const playing = event.fullQueue.find(q => q.status === "playing")
-        const next = event.fullQueue.find(q => q.status === "pending" || q.status === "ready")
+        const previousNextId = nextSong.value?.id ?? null
 
-        if (playing) {
+        const playing = event.fullQueue.find(q => q.status === "playing") ?? null
+        const next = event.fullQueue.find(
+            q => q.status === "pending" || q.status === "ready"
+        ) ?? null
 
-            const newVideo = playing?.song?.youtube_id
-            const currentVideo = currentSong.value?.song?.youtube_id
+        const currentVideo = currentSong.value?.song?.youtube_id ?? null
+        const newVideo = playing?.song?.youtube_id ?? null
 
-            currentSong.value = playing
-            nextSong.value = next
+        currentSong.value = playing
+        nextSong.value = next
 
-            if (newVideo && newVideo !== currentVideo) {
-                switchPlayers()
-            }
-
+        // si acaba de entrar un nuevo "siguiente", resaltamos
+        if (next?.id && next.id !== previousNextId && !isOverlayVisible.value) {
+            triggerNextHighlight()
         }
 
-        if (next) {
-            nextSong.value = next
+        // Si estamos en espera y entra una nueva canción como playing, que arranque sola
+        if (
+            stageMode.value === "waiting" &&
+            newVideo &&
+            newVideo !== currentVideo &&
+            playerReady.value
+        ) {
+            loadCurrentVideo()
+            stageMode.value = "idle"
+            return
         }
 
+        // si esta misma pantalla está haciendo la transición, no duplicamos
+        if (isLocalTransition) return
+
+        // si desde el panel cambiaron manualmente la canción actual
+        if (
+            newVideo &&
+            newVideo !== currentVideo &&
+            !isOverlayVisible.value &&
+            playerReady.value
+        ) {
+            stopPlayer()
+            loadCurrentVideo()
+        }
     })
-
 }
 
 /*
@@ -278,30 +365,47 @@ function initRealtime() {
 */
 
 function initYouTube() {
-
-    createPlayers()
-
-    if (nextSong.value) {
-        preloadNext(playerB.value)
-    }
-
+    createPlayer()
 }
 
 function loadYouTubeAPI() {
-
-    if (window.YT) {
+    if (window.YT && window.YT.Player) {
         initYouTube()
         return
     }
 
-    const tag = document.createElement("script")
-    tag.src = "https://www.youtube.com/iframe_api"
+    const existing = document.querySelector(
+        'script[src="https://www.youtube.com/iframe_api"]'
+    )
 
-    document.body.appendChild(tag)
+    if (!existing) {
+        const tag = document.createElement("script")
+        tag.src = "https://www.youtube.com/iframe_api"
+        document.body.appendChild(tag)
+    }
 
     window.onYouTubeIframeAPIReady = initYouTube
-
 }
+
+/*
+|--------------------------------------------------------------------------
+| WATCHERS
+|--------------------------------------------------------------------------
+*/
+
+watch(
+    () => props.current,
+    (value) => {
+        currentSong.value = value ?? null
+    }
+)
+
+watch(
+    () => props.next,
+    (value) => {
+        nextSong.value = value ?? null
+    }
+)
 
 /*
 |--------------------------------------------------------------------------
@@ -310,89 +414,127 @@ function loadYouTubeAPI() {
 */
 
 onMounted(() => {
-
     loadYouTubeAPI()
     initRealtime()
-
 })
 
 onBeforeUnmount(() => {
+    clearAllTimers()
 
-    if (playerA.value) playerA.value.destroy()
-    if (playerB.value) playerB.value.destroy()
-
-    if (window.Echo) {
-        window.Echo.leave(`karaoke.${props.settings.user_id}`)
+    try {
+        if (player.value) {
+            player.value.destroy()
+        }
+    } catch (error) {
+        console.error("Error destruyendo player:", error)
     }
 
+    if (window.Echo && channelOwnerId.value) {
+        window.Echo.leave(`karaoke.${channelOwnerId.value}`)
+    }
 })
-
 </script>
 
 <template>
     <div class="fixed inset-0 bg-black flex flex-col overflow-hidden font-sans select-none cursor-none text-white">
 
-        <!-- SECCIÓN SUPERIOR: REPRODUCTOR DE VIDEO -->
+        <!-- VIDEO -->
         <div class="relative flex-grow bg-black overflow-hidden">
-            <div id="youtube-player-a" class="absolute inset-0 transition-opacity duration-700"
-                :class="activePlayer === 'A' ? 'opacity-100' : 'opacity-0 pointer-events-none'">
-            </div>
-            <div id="youtube-player-b" class="absolute inset-0 transition-opacity duration-700"
-                :class="activePlayer === 'B' ? 'opacity-100' : 'opacity-0 pointer-events-none'">
-            </div>
+            <div id="youtube-player" class="absolute inset-0 z-10"></div>
 
-            <!-- Interstitial de Próximo Turno -->
+            <!-- OVERLAY STAGE -->
             <Transition enter-active-class="transition duration-500 ease-out" enter-from-class="opacity-0 scale-95"
-                enter-to-class="opacity-100 scale-100" leave-active-class="transition duration-500 ease-in"
+                enter-to-class="opacity-100 scale-100" leave-active-class="transition duration-400 ease-in"
                 leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
-                <div v-if="showTransition"
+                <div v-if="isOverlayVisible"
                     class="absolute inset-0 z-[9999] flex items-center justify-center bg-black/95 backdrop-blur-sm overflow-hidden">
-
-                    <!-- LUCES DE ESCENARIO -->
                     <div class="absolute inset-0 stage-lights"></div>
 
-                    <div class="relative text-center z-10">
+                    <!-- AGRADECIMIENTO -->
+                    <div v-if="stageMode === 'thanks'" class="relative text-center z-10 max-w-5xl px-8">
+                        <p class="text-amber-400 text-lg font-black uppercase tracking-[0.35em] mb-6 animate-pulse">
+                            ¡Gracias por cantar!
+                        </p>
 
+                        <h1
+                            class="text-[120px] font-black uppercase tracking-tight text-white drop-shadow-[0_0_60px_rgba(255,255,255,0.9)]">
+                            {{ transitionCurrentSong?.customer_name }}
+                        </h1>
+
+                        <div class="mt-5 text-3xl text-white/90 italic tracking-wide">
+                            Mesa {{ transitionCurrentSong?.service_table?.identifier }}
+                        </div>
+
+                        <div class="mt-5 text-2xl text-white/75 italic">
+                            "{{ transitionCurrentSong?.song?.title }}"
+                        </div>
+
+                        <div class="mt-10 text-6xl applause">👏 👏 👏</div>
+                    </div>
+
+                    <!-- ANUNCIO DEL SIGUIENTE -->
+                    <div v-else-if="stageMode === 'announce'" class="relative text-center z-10 max-w-5xl px-8">
                         <p class="text-amber-400 text-xl font-black uppercase tracking-[0.35em] mb-8 animate-pulse">
                             Siguiente en el Escenario
                         </p>
 
-                        <!-- NOMBRE -->
-                        <h1 class="text-[140px] font-black uppercase tracking-tight text-white drop-shadow-[0_0_60px_rgba(255,255,255,0.9)]">
-                            {{ transitionSong?.customer_name }}
+                        <h1
+                            class="text-[140px] font-black uppercase tracking-tight text-white drop-shadow-[0_0_60px_rgba(255,255,255,0.9)]">
+                            {{ currentSong?.customer_name }}
                         </h1>
 
-                        <!-- MESA -->
                         <div class="mt-6 text-4xl text-white/90 italic tracking-wide">
-                            Mesa {{ transitionSong?.service_table?.identifier }}
+                            Mesa {{ currentSong?.service_table?.identifier }}
                         </div>
 
-                        <!-- CANCIÓN -->
                         <div class="mt-6 text-3xl text-white/80 italic">
-                            "{{ transitionSong?.song?.title }}"
+                            "{{ currentSong?.song?.title }}"
                         </div>
 
-                        <!-- APLAUSOS -->
-                        <div class="mt-12 text-6xl applause">
-                            👏 👏 👏
+                        <div class="mt-12 text-6xl applause">👏 👏 👏</div>
+                    </div>
+
+                    <!-- CONTEO -->
+                    <div v-else-if="stageMode === 'countdown'" class="relative text-center z-10 max-w-5xl px-8">
+                        <p class="text-amber-400 text-lg font-black uppercase tracking-[0.35em] mb-8">
+                            Preparados...
+                        </p>
+
+                        <h1
+                            class="text-[180px] leading-none font-black text-white drop-shadow-[0_0_80px_rgba(255,255,255,0.9)] countdown-pop">
+                            {{ countdown }}
+                        </h1>
+
+                        <div class="mt-6 text-3xl font-black uppercase text-white">
+                            {{ currentSong?.customer_name }}
+                        </div>
+
+                        <div class="mt-3 text-xl text-white/70 italic">
+                            "{{ currentSong?.song?.title }}"
+                        </div>
+                    </div>
+
+                    <!-- ESPERA -->
+                    <div v-else-if="stageMode === 'waiting'" class="relative text-center z-10 max-w-5xl px-8">
+                        <p class="text-amber-400 text-xl font-black uppercase tracking-[0.35em] mb-8 animate-pulse">
+                            Escenario libre
+                        </p>
+
+                        <h1 class="text-[90px] font-black uppercase tracking-tight text-white/95">
+                            Esperando próximo cantante
+                        </h1>
+
+                        <div class="mt-8 text-2xl text-white/60 italic">
+                            Escanea el QR de tu mesa y pide tu canción
                         </div>
                     </div>
                 </div>
             </Transition>
         </div>
 
-        <!-- SECCIÓN INFERIOR: FOOTER & BANNER -->
-        <div v-if="!showTransition" class="flex flex-col z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.8)]">
-
-            <!-- CONTENEDOR PRINCIPAL DEL FOOTER (HUD) -->
+        <!-- FOOTER -->
+        <div v-if="!isOverlayVisible" class="flex flex-col z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.8)]">
             <div class="h-28 bg-[#0a0a0a] border-t border-white/5 flex items-center px-10 relative">
-
-                <!-- Barra de progreso de transición -->
-                <div v-if="showTransition" class="absolute top-0 left-0 w-full h-1 bg-white/5 overflow-hidden">
-                    <div class="h-full bg-amber-600 animate-[shrink_5s_linear_forwards] origin-left"></div>
-                </div>
-
-                <!-- Info Cantante Actual -->
                 <div class="flex items-center gap-8 flex-1">
                     <div class="flex flex-col">
                         <span
@@ -401,7 +543,7 @@ onBeforeUnmount(() => {
                             En Escena
                         </span>
                         <h2 class="text-4xl font-black uppercase tracking-tight leading-none italic">
-                            {{ currentSong?.customer_name }}
+                            {{ currentSong?.customer_name || "—" }}
                         </h2>
                     </div>
 
@@ -409,36 +551,62 @@ onBeforeUnmount(() => {
 
                     <div class="flex flex-col min-w-16">
                         <span class="text-white/40 text-[9px] font-bold uppercase tracking-widest mb-1">Mesa</span>
-                        <span class="text-3xl font-black leading-none text-white/90">{{
-                            currentSong?.service_table?.identifier }}</span>
+                        <span class="text-3xl font-black leading-none text-white/90">
+                            {{ currentSong?.service_table?.identifier || "—" }}
+                        </span>
                     </div>
 
                     <div class="h-10 w-px bg-white/10"></div>
 
                     <div class="flex flex-col max-w-sm">
                         <span class="text-white/40 text-[9px] font-bold uppercase tracking-widest mb-1">Cantando</span>
-                        <span class="text-xl font-bold italic truncate text-amber-100/70">"{{ currentSong?.song?.title
-                        }}"</span>
+                        <span class="text-xl font-bold italic truncate text-amber-100/70">
+                            "{{ currentSong?.song?.title || "Sin título" }}"
+                        </span>
                     </div>
                 </div>
 
-                <!-- Info Próximo -->
-                <div v-if="nextSong"
+                <Transition enter-active-class="transition duration-500 ease-out"
+                    enter-from-class="opacity-0 translate-x-4 scale-95"
+                    enter-to-class="opacity-100 translate-x-0 scale-100"
+                    leave-active-class="transition duration-300 ease-in"
+                    leave-from-class="opacity-100 translate-x-0 scale-100"
+                    leave-to-class="opacity-0 translate-x-4 scale-95">
+                    <div v-if="nextSong" :key="nextSong.id"
+                        class="flex items-center gap-5 bg-white/5 px-5 py-2.5 rounded-xl border border-white/5 transition-all duration-500"
+                        :class="highlightNext ? 'ring-2 ring-amber-400/70 bg-amber-500/10 shadow-[0_0_25px_rgba(251,191,36,0.25)] scale-[1.03]' : ''">
+                        <div class="text-right">
+                            <span class="text-white/30 text-[9px] font-black uppercase tracking-widest block mb-0.5">
+                                Siguiente
+                            </span>
+                            <span class="text-lg font-bold">{{ nextSong?.customer_name }}</span>
+                            <div class="text-[10px] text-white/55 italic mt-0.5">
+                                "{{ nextSong?.song?.title }}"
+                            </div>
+                        </div>
+
+                        <div
+                            class="w-9 h-9 rounded-full bg-amber-600/10 border border-amber-600/30 flex items-center justify-center">
+                            <span class="text-amber-500 font-black text-xs">
+                                {{ nextSong?.service_table?.identifier }}
+                            </span>
+                        </div>
+                    </div>
+                </Transition>
+
+                <div v-if="!nextSong"
                     class="flex items-center gap-5 bg-white/5 px-5 py-2.5 rounded-xl border border-white/5">
                     <div class="text-right">
-                        <span
-                            class="text-white/30 text-[9px] font-black uppercase tracking-widest block mb-0.5">Siguiente</span>
-                        <span class="text-lg font-bold">{{ nextSong?.customer_name }}</span>
-                    </div>
-                    <div
-                        class="w-9 h-9 rounded-full bg-amber-600/10 border border-amber-600/30 flex items-center justify-center">
-                        <span class="text-amber-500 font-black text-xs">{{ nextSong?.service_table?.identifier }}</span>
+                        <span class="text-white/30 text-[9px] font-black uppercase tracking-widest block mb-0.5">
+                            Siguiente
+                        </span>
+                        <span class="text-lg font-bold text-white/40">Esperando pedido...</span>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- BANNER INFERIOR EN MOVIMIENTO (TICKER) -->
+        <!-- TICKER -->
         <div class="h-7 bg-amber-600/95 overflow-hidden flex items-center border-t border-amber-400/20">
             <div
                 class="whitespace-nowrap flex animate-marquee text-black font-black uppercase italic tracking-widest text-xs">
@@ -453,16 +621,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
-@keyframes shrink {
-    from {
-        transform: scaleX(1);
-    }
-
-    to {
-        transform: scaleX(0);
-    }
-}
-
 @keyframes marquee {
     0% {
         transform: translateX(0);
@@ -471,27 +629,21 @@ onBeforeUnmount(() => {
     100% {
         transform: translateX(-20%);
     }
-
-    /* Ajustado según el número de repeticiones para que sea infinito fluido */
 }
 
 .animate-marquee {
     animation: marquee 15s linear infinite;
 }
 
-/* Ocultar cursor en toda la app */
 .cursor-none {
     cursor: none !important;
 }
 
-/* Evitar interacción con el iframe de YouTube */
-#youtube-player-a iframe,
-#youtube-player-b iframe {
+#youtube-player iframe {
     pointer-events: none;
 }
 
 @keyframes stageLights {
-
     0% {
         opacity: 0.1;
         transform: rotate(0deg);
@@ -506,7 +658,6 @@ onBeforeUnmount(() => {
         opacity: 0.1;
         transform: rotate(0deg);
     }
-
 }
 
 .stage-lights {
@@ -519,19 +670,40 @@ onBeforeUnmount(() => {
 
 @keyframes applause {
     0% {
-        transform: scale(1)
+        transform: scale(1);
     }
 
     50% {
-        transform: scale(1.2)
+        transform: scale(1.2);
     }
 
     100% {
-        transform: scale(1)
+        transform: scale(1);
     }
 }
 
 .applause {
     animation: applause 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes countdownPop {
+    0% {
+        transform: scale(0.7);
+        opacity: 0.2;
+    }
+
+    50% {
+        transform: scale(1.08);
+        opacity: 1;
+    }
+
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.countdown-pop {
+    animation: countdownPop 0.8s ease-out;
 }
 </style>

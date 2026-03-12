@@ -29,6 +29,7 @@ class StageController extends Controller
             'current'  => $current,
             'next'     => $next,
             'settings' => $settings,
+            'ownerId'  => $user->id,
         ]);
 
     }

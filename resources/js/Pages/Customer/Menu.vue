@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import { Head, router, usePage } from '@inertiajs/vue3';
 import {
     Mic2,
@@ -10,7 +10,6 @@ import {
     Music2,
     Layers,
     ChevronRight,
-    User as UserIcon
 } from 'lucide-vue-next';
 
 const props = defineProps({
@@ -20,11 +19,23 @@ const props = defineProps({
         type: Array,
         default: () => []
     },
-    mySongsCount: Number
+    mySongsCount: {
+        type: Number,
+        default: 0
+    },
+    ownerId: {
+        type: Number,
+        default: null
+    }
 });
 
 const page = usePage();
+
 const showSuccessModal = ref(false);
+const myActiveSongsState = ref([...props.myActiveSongs]);
+const mySongsCountState = ref(props.mySongsCount);
+
+let channel = null;
 
 const navigateTo = (routeId) => {
     if (routeId === 'karaoke') {
@@ -32,23 +43,80 @@ const navigateTo = (routeId) => {
     }
 };
 
+const openSuccessModal = () => {
+    showSuccessModal.value = true;
+
+    setTimeout(() => {
+        showSuccessModal.value = false;
+    }, 3500);
+};
+
 onMounted(() => {
     if (page.props.flash?.success) {
-        showSuccessModal.value = true;
-        setTimeout(() => {
-            showSuccessModal.value = false;
-        }, 3500);
+        openSuccessModal();
+    }
+
+    if (!window.Echo || !props.ownerId) {
+        console.warn('Echo u ownerId no disponible en Menu.vue');
+        return;
+    }
+
+    channel = window.Echo.private(`karaoke.${props.ownerId}`);
+
+    channel.listen('.queue.updated', (event) => {
+        if (!event.fullQueue) return;
+
+        // Cola global del local
+        const globalQueue = [...event.fullQueue]
+            .filter(item =>
+                item.status === 'pending' &&
+                item.type === 'song'
+            )
+            .sort((a, b) => a.order_index - b.order_index);
+
+        // Pedidos activos de esta mesa
+        const myActive = event.fullQueue
+            .filter(item =>
+                item.service_table_id === props.table.id &&
+                ['pending', 'playing'].includes(item.status) &&
+                item.type === 'song'
+            )
+            .sort((a, b) => a.order_index - b.order_index)
+            .map((queueItem) => {
+                const position =
+                    queueItem.status === 'playing'
+                        ? 0
+                        : globalQueue.filter(q => q.order_index < queueItem.order_index).length + 1;
+
+                return {
+                    id: queueItem.id,
+                    title: queueItem.song?.youtube_title || queueItem.song?.title || `Pedido: ${queueItem.customer_name}`,
+                    position,
+                    customer_name: queueItem.customer_name,
+                    status: queueItem.status,
+                    song: queueItem.song ?? null,
+                };
+            });
+
+        myActiveSongsState.value = myActive;
+        mySongsCountState.value = myActive.length;
+    });
+});
+
+onBeforeUnmount(() => {
+    if (window.Echo && props.ownerId) {
+        window.Echo.leave(`karaoke.${props.ownerId}`);
     }
 });
 
-watch(() => page.props.flash?.success, (newVal) => {
-    if (newVal) {
-        showSuccessModal.value = true;
-        setTimeout(() => {
-            showSuccessModal.value = false;
-        }, 3500);
+watch(
+    () => page.props.flash?.success,
+    (newVal) => {
+        if (newVal) {
+            openSuccessModal();
+        }
     }
-});
+);
 
 const menuOptions = [
     {
@@ -93,7 +161,7 @@ const menuOptions = [
                 class="inline-flex items-center gap-2 mt-3 px-4 py-1.5 bg-white/5 rounded-full border border-white/5 backdrop-blur-md">
                 <div class="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
                 <span class="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Mesa #{{ table.identifier
-                    }}</span>
+                }}</span>
             </div>
         </header>
 
@@ -108,21 +176,25 @@ const menuOptions = [
                     </h3>
                     <span
                         class="text-[9px] font-bold bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded border border-indigo-500/20">
-                        {{ mySongsCount }} Pedidos
+                        {{ mySongsCountState }} Pedidos en total
                     </span>
                 </div>
 
-                <div v-if="myActiveSongs && myActiveSongs.length > 0" class="space-y-3">
-                    <div v-for="(song, index) in myActiveSongs" :key="song.id"
+                <div v-if="myActiveSongsState && myActiveSongsState.length > 0" class="space-y-3">
+                    <div v-for="(song, index) in myActiveSongsState" :key="song.id"
                         class="relative overflow-hidden flex items-center justify-between p-4 bg-[#12141c] border border-white/5 rounded-3xl transition-all active:scale-[0.98]"
-                        :class="index === 0 ? 'ring-1 ring-indigo-500/50 shadow-2xl' : ''">
+                        :class="song.status === 'playing'
+                            ? 'ring-1 ring-emerald-500/50 shadow-2xl bg-gradient-to-r from-[#0f1d18] to-[#12141c]'
+                            : index === 0
+                                ? 'ring-1 ring-indigo-500/50 shadow-2xl bg-gradient-to-r from-[#161925] to-[#12141c]'
+                                : ''">
 
                         <div v-if="index === 0" class="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500"></div>
 
                         <div class="flex items-center gap-4 flex-1 min-w-0">
-                            <div class="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
+                            <div class="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 text-[10px] font-black"
                                 :class="index === 0 ? 'bg-indigo-500 text-white shadow-lg' : 'bg-white/5 text-gray-500'">
-                                <Music2 class="w-5 h-5" />
+                                {{ index + 1 }}
                             </div>
 
                             <div class="min-w-0 flex-1">
@@ -130,9 +202,9 @@ const menuOptions = [
                                     {{ song.title || 'Preparando...' }}
                                 </h4>
                                 <div class="flex items-center gap-1.5 mt-0.5 opacity-60">
-                                    <UserIcon class="w-3 h-3 text-indigo-400" />
+                                    <Music2 class="w-3 h-3 text-indigo-400" />
                                     <span class="text-[10px] font-bold uppercase tracking-wider truncate">
-                                        {{ song.customer_name }}
+                                        {{ song.song?.artist || 'Artista' }}
                                     </span>
                                 </div>
                             </div>
@@ -142,9 +214,12 @@ const menuOptions = [
                             class="ml-4 flex flex-col items-center justify-center bg-white/5 px-3 py-2 rounded-2xl min-w-[55px] border border-white/5">
                             <span
                                 class="text-[8px] font-black text-gray-500 uppercase leading-none mb-1 text-center">Turno</span>
-                            <span class="text-lg font-black leading-none"
-                                :class="index === 0 ? 'text-indigo-400' : 'text-white'">
-                                #{{ song.position }}
+                            <span class="text-lg font-black leading-none" :class="song.status === 'playing'
+                                ? 'text-emerald-400'
+                                : index === 0
+                                    ? 'text-indigo-400'
+                                    : 'text-white'">
+                                {{ song.status === 'playing' ? 'LIVE' : `#${song.position}` }}
                             </span>
                         </div>
                     </div>

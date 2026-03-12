@@ -61,35 +61,52 @@ const confirmCustomerName = () => {
 
 // 3. Envío de canción
 const selectSong = (item, isYoutube = false) => {
+    if (isSubmitting.value) return;
+
     if (!customerName.value) {
         openNameModal();
         return;
     }
 
-    const payload = isYoutube ? {
-        youtube_id: item.id.videoId,
-        youtube_title: item.snippet.title,
-        title: item.snippet.title,
-        artist: item.snippet.channelTitle,
-        thumbnail_url: item.snippet.thumbnails.high ? item.snippet.thumbnails.high.url : item.snippet.thumbnails.default.url,
-        customer_name: customerName.value
-    } : {
-        youtube_id: item.youtube_id,
-        title: item.title,
-        artist: item.artist,
-        customer_name: customerName.value
-    };
+    const payload = isYoutube
+        ? {
+            youtube_id: item.id.videoId,
+            youtube_title: item.snippet.title,
+            title: item.snippet.title,
+            artist: item.snippet.channelTitle,
+            thumbnail_url: item.snippet.thumbnails.high
+                ? item.snippet.thumbnails.high.url
+                : item.snippet.thumbnails.default.url,
+            customer_name: customerName.value
+        }
+        : {
+            youtube_id: item.youtube_id,
+            title: item.title,
+            artist: item.artist,
+            customer_name: customerName.value
+        };
 
     router.post(route('customer.songs.store', { identifier: props.table.identifier }), payload, {
-        onBefore: () => { isSubmitting.value = true; },
+        preserveScroll: true,
+        onBefore: () => {
+            isSubmitting.value = true;
+        },
         onSuccess: () => {
-            isSubmitting.value = false;
             showSuccess.value = true;
+
             setTimeout(() => {
                 router.get(route('customer.menu', { identifier: props.table.identifier }));
             }, 2500);
         },
-        onError: () => { isSubmitting.value = false; }
+        onError: (errors) => {
+            console.error('Error al pedir canción:', errors);
+            isSubmitting.value = false;
+        },
+        onFinish: () => {
+            if (!showSuccess.value) {
+                isSubmitting.value = false;
+            }
+        }
     });
 };
 
@@ -147,6 +164,7 @@ onMounted(() => {
             </h4>
             <div v-for="song in results.local" :key="song.id" @click="selectSong(song)"
                 class="group p-5 bg-[#12141c]/80 border border-white/5 flex items-center justify-between active:scale-95 transition-all hover:border-indigo-500/30"
+                :class="{ 'opacity-50 pointer-events-none': isSubmitting }"
                 :style="{ borderRadius: brandSettings.border_radius || '1rem' }">
                 <div class="min-w-0 flex-1">
                     <p class="font-black text-sm uppercase truncate">{{ song.title }}</p>
@@ -164,6 +182,7 @@ onMounted(() => {
             </h4>
             <div v-for="video in results.youtube" :key="video.id.videoId" @click="selectSong(video, true)"
                 class="flex gap-4 p-3 bg-[#12141c]/40 border border-white/5 active:scale-95 transition-all overflow-hidden"
+                :class="{ 'opacity-50 pointer-events-none': isSubmitting }"
                 :style="{ borderRadius: brandSettings.border_radius }">
 
                 <div class="relative shrink-0">
@@ -215,6 +234,18 @@ onMounted(() => {
                             Cancelar
                         </button>
                     </div>
+                </div>
+            </div>
+        </Transition>
+
+        <Transition name="fade">
+            <div v-if="isSubmitting && !showSuccess"
+                class="fixed inset-0 z-[250] bg-[#090a0f]/90 backdrop-blur-sm flex items-center justify-center p-6 text-center">
+                <div class="space-y-4">
+                    <Loader2 class="w-10 h-10 text-indigo-500 animate-spin mx-auto" />
+                    <p class="text-[10px] font-black uppercase tracking-[0.3em] text-white">
+                        Enviando pedido...
+                    </p>
                 </div>
             </div>
         </Transition>
