@@ -70,7 +70,7 @@ const maxWidthClass = computed(() => {
                 enter-to-class="opacity-100" leave-active-class="ease-in duration-200" leave-from-class="opacity-100"
                 leave-to-class="opacity-0">
                 <div v-show="show" class="fixed inset-0 transform transition-all" @click="close">
-                    <div class="absolute inset-0 bg-[#000]/60 backdrop-blur-sm" />
+                    <div class="absolute inset-0 bg-black/70 backdrop-blur-md" />
                 </div>
             </Transition>
 
@@ -80,15 +80,24 @@ const maxWidthClass = computed(() => {
                 leave-from-class="opacity-100 translate-y-0 sm:scale-100"
                 leave-to-class="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95">
                 <div v-show="show"
-                    class="mb-6 transform transition-all sm:w-full border border-white/10 shadow-2xl overflow-hidden"
+                    class="relative mb-6 transform transition-all sm:w-full border border-white/10 shadow-2xl overflow-hidden bg-[#0b0d12]"
                     :class="[maxWidthClass]" :style="{
-                        backgroundColor: settings?.sidebar_color || '#12141c',
                         borderRadius: settings?.border_radius || '1rem',
-                        fontFamily: 'var(--font-family)'
+                        fontFamily: settings?.font_family || 'Inter'
                     }">
-                    <div class="h-1 w-full" :style="{ backgroundColor: 'var(--accent)' }"></div>
 
-                    <div class="p-1">
+                    <!-- Glow decorativo fijo -->
+                    <div
+                        class="absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-white/5 to-transparent pointer-events-none">
+                    </div>
+                    <div class="absolute -top-10 -right-10 w-32 h-32 rounded-full blur-3xl opacity-20 pointer-events-none"
+                        :style="{ backgroundColor: settings?.accent_color || '#6366f1' }">
+                    </div>
+
+                    <!-- Accent bar -->
+                    <div class="h-1 w-full" :style="{ backgroundColor: settings?.accent_color || '#6366f1' }"></div>
+
+                    <div class="relative p-1">
                         <slot v-if="showSlot" />
                     </div>
                 </div>

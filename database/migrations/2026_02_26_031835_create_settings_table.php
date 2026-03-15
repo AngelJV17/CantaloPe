@@ -21,15 +21,18 @@ return new class extends Migration
             $table->string('favicon_path')->nullable();
             $table->text('description')->nullable();
 
-                                                                      // 2. Colores y Vibe
+            // 2. Colores y Vibe
             $table->string('primary_color', 7)->default('#090a0f');   // Fondo general
             $table->string('sidebar_color', 7)->default('#12141c');   // Color del menú
             $table->string('accent_color', 7)->default('#6366f1');    // Color de destaque (Indigo)
             $table->string('secondary_color', 7)->default('#4338ca'); // Color para gradientes/hovers
             $table->string('text_color', 7)->default('#f3f4f6');      // Color de letra
 
-                                                         // 3. Estética y Dark Mode
-            $table->boolean('dark_mode')->default(true); // Tu recomendación: activo por defecto
+            $table->string('theme_name')->default('Neón');
+            $table->string('theme_mode')->default('dark'); // dark | light
+            $table->boolean('is_custom_theme')->default(false);
+
+            // 3. Estética y Dark Mode
             $table->string('border_radius')->default('1rem');
             $table->string('font_family')->default('Inter');
 

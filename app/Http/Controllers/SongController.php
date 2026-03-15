@@ -13,20 +13,23 @@ class SongController extends Controller
     {
         $user = Auth::user();
 
-        // 1. Filtramos solo las canciones que pertenecen al usuario logueado
-        $query = Song::where('user_id', $user->id);
+        $query = Song::query();
 
-        // 2. Aplicamos filtros de búsqueda (ahora busca en título y artista)
         if ($request->filled('search')) {
-            $query->where(function ($q) use ($request) {
-                $q->where('title', 'like', '%' . $request->search . '%')
-                    ->orWhere('artist', 'like', '%' . $request->search . '%')
-                    ->orWhere('youtube_id', 'like', '%' . $request->search . '%');
+            $search = trim((string) $request->search);
+
+            $query->where(function ($q) use ($search) {
+                $q->where('title', 'like', '%' . $search . '%')
+                    ->orWhere('artist', 'like', '%' . $search . '%')
+                    ->orWhere('youtube_title', 'like', '%' . $search . '%')
+                    ->orWhere('channel_title', 'like', '%' . $search . '%')
+                    ->orWhere('youtube_id', 'like', '%' . $search . '%');
             });
         }
 
-        $songs = $query->orderBy('created_at', 'desc')
-            ->paginate($request->input('perPage', 10))
+        $songs = $query
+            ->orderByDesc('created_at')
+            ->paginate((int) $request->input('perPage', 10))
             ->withQueryString();
 
         return Inertia::render('Songs/Index', [
@@ -38,72 +41,194 @@ class SongController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
-            'youtube_url' => 'required|url',
+        $validated = $request->validate([
+            'youtube_url' => ['required', 'url'],
         ]);
 
-        $url = $request->youtube_url;
+        $videoId = $this->extractYoutubeVideoId($validated['youtube_url']);
 
-        // 1. Extraer ID de YouTube
-        preg_match("/^(?:http(?:s)?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|youtube\.com\/(?:(?:watch)?\?v=|embed\/|v\/))([^\?&\"'>]+)/", $url, $matches);
-
-        if (! isset($matches[1])) {
+        if (! $videoId) {
             return back()->with('error', 'El enlace de YouTube no es válido.');
         }
 
-        $videoId = $matches[1];
-        $user    = Auth::user();
+        $exists = Song::where('youtube_id', $videoId)->exists();
 
-        // 2. Evitar duplicados para este usuario específico
-        $exists = Song::where('user_id', $user->id)->where('youtube_id', $videoId)->exists();
         if ($exists) {
-            return back()->with('error', 'Esta canción ya está en tu biblioteca.');
+            return back()->with('error', 'Esta canción ya existe en el catálogo.');
         }
 
-        // 3. Obtener info de YouTube (oembed es gratuito y no requiere API Key compleja)
-        $response = Http::get("https://www.youtube.com/oembed?url=http://www.youtube.com/watch?v={$videoId}&format=json");
+        $videoData = $this->fetchYoutubeVideoData($videoId);
 
-        if ($response->failed()) {
-            return back()->with('error', 'No pudimos conectar con YouTube.');
+        if (! $videoData) {
+            return back()->with('error', 'No pudimos obtener los datos del video desde YouTube.');
         }
 
-        $videoData = $response->json();
-        $rawTitle  = $videoData['title'];
+        $attributes = $this->buildSongAttributesFromYoutube($videoId, $videoData);
 
-        // 4. LÓGICA DE LIMPIEZA AUTOMÁTICA
-        // Intentamos separar "Artista - Título" si el video viene con ese formato
-        $artist = $videoData['author_name'] ?? 'Desconocido';
-        $title  = $rawTitle;
+        Song::create($attributes);
 
-        if (str_contains($rawTitle, ' - ')) {
-            $parts  = explode(' - ', $rawTitle);
-            $artist = trim($parts[0]);
-            $title  = trim($parts[1]);
-        }
+        return redirect()
+            ->route('songs.index')
+            ->with('success', '¡Canción añadida correctamente al catálogo!');
+    }
 
-        // 5. Guardar con la nueva estructura
-        Song::create([
-            'user_id'       => $user->id,
-            'title'         => $title,
-            'artist'        => $artist,
-            'youtube_title' => $rawTitle,
-            'youtube_id'    => $videoId,
-            'thumbnail_url' => $videoData['thumbnail_url'] ?? null,
-            'times_played'  => 0,
+    public function update(Request $request, Song $song)
+    {
+        $validated = $request->validate([
+            'title'  => ['required', 'string', 'max:255'],
+            'artist' => ['nullable', 'string', 'max:255'],
         ]);
 
-        return redirect()->route('songs.index')->with('success', '¡Hit añadido correctamente!');
+        $song->update([
+            'title'  => trim($validated['title']),
+            'artist' => filled($validated['artist'] ?? null)
+                ? trim($validated['artist'])
+                : null,
+        ]);
 
+        return back()->with('success', 'Canción actualizada correctamente.');
     }
 
     public function destroy(Song $song)
     {
-        // Seguridad: Solo el dueño puede borrar su propia canción
-        if ($song->user_id !== Auth::id()) {
-            abort(403);
+        $song->delete();
+
+        return back()->with('success', 'Canción eliminada del catálogo.');
+    }
+
+    protected function extractYoutubeVideoId(string $url): ?string
+    {
+        preg_match(
+            "/^(?:http(?:s)?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|youtube\.com\/(?:(?:watch)?\?v=|embed\/|v\/))([^\?&\"'>]+)/",
+            $url,
+            $matches
+        );
+
+        return $matches[1] ?? null;
+    }
+
+    protected function fetchYoutubeVideoData(string $videoId): ?array
+    {
+        $response = Http::get('https://www.googleapis.com/youtube/v3/videos', [
+            'part' => 'snippet,contentDetails,status',
+            'id'   => $videoId,
+            'key'  => config('services.youtube.key'),
+        ]);
+
+        if (! $response->successful()) {
+            return null;
         }
 
-        $song->delete();
-        return back()->with('success', 'Canción eliminada de tu biblioteca.');
+        return $response->json('items.0');
+    }
+
+    protected function buildSongAttributesFromYoutube(string $videoId, array $videoData): array
+    {
+        $snippet        = $videoData['snippet'] ?? [];
+        $contentDetails = $videoData['contentDetails'] ?? [];
+        $status         = $videoData['status'] ?? [];
+
+        $youtubeTitle = $snippet['title'] ?? 'Sin título';
+        $channelTitle = $snippet['channelTitle'] ?? null;
+
+        [$artist, $title] = $this->normalizeArtistAndTitle($youtubeTitle, $channelTitle);
+
+        return [
+            'youtube_id'           => $videoId,
+            'youtube_title'        => $youtubeTitle,
+            'title'                => $title,
+            'artist'               => $artist,
+            'channel_title'        => $channelTitle,
+            'thumbnail_url'        => $this->resolveThumbnailUrl($snippet),
+            'duration_seconds'     => $this->parseYoutubeDuration($contentDetails['duration'] ?? null),
+            'category_id'          => $snippet['categoryId'] ?? null,
+            'tags'                 => $snippet['tags'] ?? null,
+            'youtube_published_at' => $snippet['publishedAt'] ?? null,
+            'is_embeddable'        => (bool) ($status['embeddable'] ?? true),
+            'privacy_status'       => $status['privacyStatus'] ?? null,
+            'definition'           => $contentDetails['definition'] ?? null,
+            'has_caption'          => ($contentDetails['caption'] ?? 'false') === 'true',
+        ];
+    }
+
+    protected function normalizeArtistAndTitle(string $youtubeTitle, ?string $channelTitle = null): array
+    {
+        $cleanTitle = $this->cleanYoutubeTitle($youtubeTitle);
+
+        $artist = $channelTitle ?: 'Desconocido';
+        $title  = $cleanTitle;
+
+        if (str_contains($cleanTitle, ' - ')) {
+            $parts = explode(' - ', $cleanTitle, 2);
+
+            $artist = trim($parts[0]) ?: $artist;
+            $title  = trim($parts[1]) ?: $cleanTitle;
+        }
+
+        return [$artist, $title];
+    }
+
+    protected function cleanYoutubeTitle(string $title): string
+    {
+        $patterns = [
+            '/\bkaraoke\b/i',
+            '/\blyrics?\b/i',
+            '/\blyric video\b/i',
+            '/\bletra\b/i',
+            '/\bpista\b/i',
+            '/\binstrumental\b/i',
+            '/\bversión\b/i',
+            '/\bversion\b/i',
+            '/\bofficial video\b/i',
+            '/\bvideo oficial\b/i',
+            '/\baudio oficial\b/i',
+            '/\bcon letra\b/i',
+            '/\bsin voz\b/i',
+            '/\bfull hd\b/i',
+            '/\b4k\b/i',
+            '/\bhd\b/i',
+        ];
+
+        $title = preg_replace($patterns, '', $title);
+
+        $title = preg_replace('/\(\s*\)/', '', $title);
+        $title = preg_replace('/\[\s*\]/', '', $title);
+        $title = preg_replace('/\(([-\s]*)\)/', '', $title);
+        $title = preg_replace('/\[([-\s]*)\]/', '', $title);
+
+        $title = preg_replace('/\s{2,}/', ' ', $title);
+        $title = preg_replace('/\s*-\s*-\s*/', ' - ', $title);
+
+        $title = preg_replace('/\(\s+/', '(', $title);
+        $title = preg_replace('/\s+\)/', ')', $title);
+
+        $title = trim($title);
+        $title = trim($title, '-');
+        $title = preg_replace('/\s{2,}/', ' ', $title);
+
+        return trim($title);
+    }
+
+    protected function resolveThumbnailUrl(array $snippet): ?string
+    {
+        return $snippet['thumbnails']['high']['url'] ?? $snippet['thumbnails']['medium']['url'] ?? $snippet['thumbnails']['default']['url'] ?? null;
+    }
+
+    protected function parseYoutubeDuration(?string $duration): ?int
+    {
+        if (! $duration) {
+            return null;
+        }
+
+        try {
+            $interval = new \DateInterval($duration);
+
+            return ($interval->d * 86400)
+             + ($interval->h * 3600)
+             + ($interval->i * 60)
+             + $interval->s;
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 }

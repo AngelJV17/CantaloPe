@@ -7,8 +7,19 @@ import Pagination from '@/Components/Pagination.vue';
 import EmptyState from '@/Components/EmptyState.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import InputError from '@/Components/InputError.vue';
+import Modal from '@/Components/Modal.vue';
 import Swal from 'sweetalert2';
-import { Youtube, Plus, Trash2, Music, BarChart3, Loader2, User } from 'lucide-vue-next';
+import {
+    Youtube,
+    Plus,
+    Trash2,
+    Music,
+    BarChart3,
+    Loader2,
+    User,
+    Pencil,
+    X
+} from 'lucide-vue-next';
 
 const props = defineProps({
     songs: Object,
@@ -18,9 +29,13 @@ const props = defineProps({
 
 const page = usePage();
 
-// --- LÓGICA DE TOAST MEJORADA ---
+/*
+|--------------------------------------------------------------------------
+| TOASTS
+|--------------------------------------------------------------------------
+*/
+
 watch(() => page.props.flash, (flash) => {
-    // Si no hay nada nuevo, ignorar
     if (!flash) return;
 
     const successMsg = flash.success || flash.message;
@@ -57,28 +72,42 @@ watch(() => page.props.flash, (flash) => {
     }
 }, { deep: true, immediate: true });
 
+/*
+|--------------------------------------------------------------------------
+| FILTERS
+|--------------------------------------------------------------------------
+*/
+
 const search = ref(props.filters.search || '');
 const perPage = ref(props.filters.perPage || '10');
 
-// Lógica de filtrado con debounce
 let timer = null;
+
 watch(search, (v) => {
     clearTimeout(timer);
+
     timer = setTimeout(() => {
-        router.get(route('songs.index'),
+        router.get(
+            route('songs.index'),
             { search: v, perPage: perPage.value },
             { preserveState: true, replace: true, preserveScroll: true }
         );
     }, 400);
 });
 
-// Watch para perPage corregido
 watch(perPage, (v) => {
-    router.get(route('songs.index'),
+    router.get(
+        route('songs.index'),
         { search: search.value, perPage: v },
         { preserveState: true, preserveScroll: true }
     );
 });
+
+/*
+|--------------------------------------------------------------------------
+| THEME
+|--------------------------------------------------------------------------
+*/
 
 const themeStyles = computed(() => ({
     '--bg-card': props.settings?.sidebar_color || '#12141c',
@@ -87,17 +116,74 @@ const themeStyles = computed(() => ({
     fontFamily: props.settings?.font_family || 'Inter',
 }));
 
-const form = useForm({ youtube_url: '' });
+/*
+|--------------------------------------------------------------------------
+| CREATE SONG
+|--------------------------------------------------------------------------
+*/
+
+const form = useForm({
+    youtube_url: ''
+});
 
 const submit = () => {
     form.post(route('songs.store'), {
         onSuccess: () => {
             form.reset();
-            // El watch de page.props.flash disparará el Swal automáticamente
         },
         preserveScroll: true
     });
 };
+
+/*
+|--------------------------------------------------------------------------
+| EDIT SONG MODAL
+|--------------------------------------------------------------------------
+*/
+
+const showEditModal = ref(false);
+const editingSong = ref(null);
+
+const editForm = useForm({
+    title: '',
+    artist: '',
+});
+
+const openEditModal = (song) => {
+    editingSong.value = song;
+
+    editForm.reset();
+    editForm.clearErrors();
+
+    editForm.title = song.title || '';
+    editForm.artist = song.artist || '';
+
+    showEditModal.value = true;
+};
+
+const closeEditModal = () => {
+    showEditModal.value = false;
+    editingSong.value = null;
+    editForm.reset();
+    editForm.clearErrors();
+};
+
+const updateSong = () => {
+    if (!editingSong.value) return;
+
+    editForm.put(route('songs.update', editingSong.value.id), {
+        preserveScroll: true,
+        onSuccess: () => {
+            closeEditModal();
+        }
+    });
+};
+
+/*
+|--------------------------------------------------------------------------
+| DELETE SONG
+|--------------------------------------------------------------------------
+*/
 
 const deleteFromLibrary = (id) => {
     Swal.fire({
@@ -117,7 +203,9 @@ const deleteFromLibrary = (id) => {
         }
     }).then((result) => {
         if (result.isConfirmed) {
-            router.delete(route('songs.destroy', id), { preserveScroll: true });
+            router.delete(route('songs.destroy', id), {
+                preserveScroll: true
+            });
         }
     });
 };
@@ -126,11 +214,15 @@ const deleteFromLibrary = (id) => {
 <template>
 
     <Head title="Biblioteca" />
+
     <AuthenticatedLayout>
-        <template #header><span>Biblioteca Maestra</span></template>
+        <template #header>
+            <span>Biblioteca Maestra</span>
+        </template>
 
         <div class="max-w-7xl mx-auto pb-20 px-4 mt-8 space-y-6" :style="themeStyles">
 
+            <!-- FORM REGISTRAR -->
             <div
                 class="p-8 bg-[var(--bg-card)]/50 border border-white/5 backdrop-blur-xl shadow-2xl rounded-[var(--radius)]">
                 <div class="mb-6">
@@ -138,6 +230,7 @@ const deleteFromLibrary = (id) => {
                         Alimentar <span class="text-[var(--accent)]">Sistema</span>
                     </h2>
                 </div>
+
                 <form @submit.prevent="submit"
                     class="flex gap-3 p-2 bg-black/40 border border-white/5 rounded-2xl focus-within:border-[var(--accent)]/50 transition-all shadow-inner">
                     <div class="flex-1 flex items-center px-4 gap-3">
@@ -145,22 +238,27 @@ const deleteFromLibrary = (id) => {
                         <input v-model="form.youtube_url" type="text" placeholder="PEGA EL LINK DE YOUTUBE AQUÍ..."
                             class="w-full bg-transparent border-none text-white font-bold text-xs uppercase focus:ring-0" />
                     </div>
+
                     <PrimaryButton :disabled="form.processing" :style="{ borderRadius: '0.75rem' }">
                         <Loader2 v-if="form.processing" class="w-4 h-4 animate-spin mr-2" />
                         <Plus v-else class="w-4 h-4 mr-2" />
                         REGISTRAR
                     </PrimaryButton>
                 </form>
+
                 <InputError :message="form.errors.youtube_url"
                     class="mt-2 ml-4 text-[10px] uppercase italic text-red-500" />
             </div>
 
+            <!-- TABLA -->
             <div
                 class="bg-[var(--bg-card)]/30 border border-white/5 backdrop-blur-xl shadow-2xl rounded-[var(--radius)] overflow-hidden">
                 <div class="p-6 border-b border-white/5 bg-black/20 flex flex-col gap-5">
                     <div class="flex items-center gap-3">
                         <Music class="w-4 h-4 text-[var(--accent)]" />
-                        <h3 class="font-black text-white uppercase text-xs tracking-[0.3em]">Hits Registrados</h3>
+                        <h3 class="font-black text-white uppercase text-xs tracking-[0.3em]">
+                            Hits Registrados
+                        </h3>
                     </div>
 
                     <TableFilters v-model:search="search" v-model:perPage="perPage"
@@ -175,10 +273,11 @@ const deleteFromLibrary = (id) => {
                                 <th class="px-8 py-6 w-20">#</th>
                                 <th class="px-4 py-6 text-center">Vista</th>
                                 <th class="px-8 py-6">Información del Hit</th>
-                                <th class="px-8 py-6 text-center">Popularidad</th>
+                                <th class="px-8 py-6 text-center">Metadata</th>
                                 <th class="px-8 py-6 text-right">Acciones</th>
                             </tr>
                         </thead>
+
                         <tbody class="divide-y divide-white/5">
                             <tr v-for="(song, index) in songs.data" :key="song.id"
                                 class="group hover:bg-white/[0.02] transition-colors">
@@ -213,8 +312,8 @@ const deleteFromLibrary = (id) => {
                                             class="mt-0.5 flex items-start gap-1.5 opacity-50 group-hover:opacity-100 transition-opacity">
                                             <span
                                                 class="text-[10px] font-mono text-gray-400 leading-none bg-white/5 px-2 py-1 rounded border border-white/10 italic">
-                                                <span class="text-red-500/80 mr-1 font-bold">YT:</span> {{
-                                                song.youtube_title }}
+                                                <span class="text-red-500/80 mr-1 font-bold">YT:</span>
+                                                {{ song.youtube_title }}
                                             </span>
                                         </div>
                                     </div>
@@ -225,25 +324,34 @@ const deleteFromLibrary = (id) => {
                                         <span
                                             class="inline-flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-lg border border-white/5 text-xs font-black text-white italic shadow-sm">
                                             <BarChart3 class="w-3.5 h-3.5 text-[var(--accent)]" />
-                                            {{ song.times_played }}
+                                            {{ song.duration_seconds ? `${Math.floor(song.duration_seconds /
+                                                60)}:${String(song.duration_seconds % 60).padStart(2, '0')}` : 'N/A' }}
                                         </span>
 
-                                        <span v-if="song.last_played_at"
-                                            class="text-[10px] text-gray-500 uppercase font-black tracking-wider opacity-80">
-                                            Última: {{ new Date(song.last_played_at).toLocaleDateString() }}
+                                        <span v-if="song.channel_title"
+                                            class="text-[10px] text-gray-500 uppercase font-black tracking-wider opacity-80 max-w-[180px] truncate">
+                                            {{ song.channel_title }}
                                         </span>
                                     </div>
                                 </td>
 
                                 <td class="px-8 py-4 text-right">
-                                    <button @click="deleteFromLibrary(song.id)"
-                                        class="p-3 text-white/20 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all active:scale-90 border border-transparent hover:border-red-500/20">
-                                        <Trash2 class="w-5 h-5" />
-                                    </button>
+                                    <div class="flex items-center justify-end gap-2">
+                                        <button @click="openEditModal(song)"
+                                            class="p-3 text-white/30 hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 rounded-xl transition-all active:scale-90 border border-transparent hover:border-[var(--accent)]/20">
+                                            <Pencil class="w-5 h-5" />
+                                        </button>
+
+                                        <button @click="deleteFromLibrary(song.id)"
+                                            class="p-3 text-white/20 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all active:scale-90 border border-transparent hover:border-red-500/20">
+                                            <Trash2 class="w-5 h-5" />
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         </tbody>
                     </table>
+
                     <EmptyState v-else title="Sin Hits" />
                 </div>
 
@@ -252,6 +360,77 @@ const deleteFromLibrary = (id) => {
                 </div>
             </div>
         </div>
+
+        <!-- MODAL EDITAR -->
+        <Modal :show="showEditModal" max-width="2xl" @close="closeEditModal">
+            <div class="p-6 md:p-8">
+                <div class="flex items-start justify-between gap-4 mb-6">
+                    <div>
+                        <h2 class="text-xl font-black text-white uppercase italic tracking-widest">
+                            Editar <span class="text-[var(--accent)]">Hit</span>
+                        </h2>
+                        <p class="text-[10px] text-gray-500 font-bold uppercase tracking-[0.25em] mt-2">
+                            Corrige metadata y ordena tu catálogo
+                        </p>
+                    </div>
+
+                    <button @click="closeEditModal"
+                        class="p-2 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition">
+                        <X class="w-5 h-5" />
+                    </button>
+                </div>
+
+                <form @submit.prevent="updateSong" class="space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-[150px_1fr] gap-6">
+                        <div>
+                            <div
+                                class="w-full aspect-video rounded-2xl overflow-hidden border border-white/10 bg-black/30">
+                                <img :src="editForm.thumbnail_url || (editingSong ? `https://img.youtube.com/vi/${editingSong.youtube_id}/mqdefault.jpg` : '')"
+                                    class="w-full h-full object-cover" />
+                            </div>
+                        </div>
+
+                        <div class="space-y-5">
+                            <div>
+                                <label
+                                    class="block text-[10px] font-black uppercase tracking-[0.25em] text-gray-400 mb-2">
+                                    Título
+                                </label>
+                                <input v-model="editForm.title" type="text"
+                                    class="w-full bg-black/30 border border-white/10 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-[var(--accent)]" />
+                                <InputError :message="editForm.errors.title"
+                                    class="mt-2 text-[10px] uppercase text-red-500" />
+                            </div>
+
+                            <div>
+                                <label
+                                    class="block text-[10px] font-black uppercase tracking-[0.25em] text-gray-400 mb-2">
+                                    Artista
+                                </label>
+                                <input v-model="editForm.artist" type="text"
+                                    class="w-full bg-black/30 border border-white/10 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-[var(--accent)]" />
+                                <InputError :message="editForm.errors.artist"
+                                    class="mt-2 text-[10px] uppercase text-red-500" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-end gap-3 pt-4 border-t border-white/5">
+                        <button type="button" @click="closeEditModal"
+                            class="px-5 py-3 rounded-xl border border-white/10 text-white/70 hover:text-white hover:bg-white/5 transition text-xs font-black uppercase tracking-[0.2em]">
+                            Cancelar
+                        </button>
+
+                        <PrimaryButton type="submit" :disabled="editForm.processing"
+                            :style="{ borderRadius: '0.75rem' }">
+                            <Loader2 v-if="editForm.processing" class="w-4 h-4 animate-spin mr-2" />
+                            <Pencil v-else class="w-4 h-4 mr-2" />
+                            Guardar cambios
+                        </PrimaryButton>
+                    </div>
+                </form>
+            </div>
+        </Modal>
     </AuthenticatedLayout>
 </template>
 

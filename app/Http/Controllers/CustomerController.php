@@ -5,6 +5,7 @@ use App\Events\QueueUpdated;
 use App\Models\Queue;
 use App\Models\ServiceTable;
 use App\Models\Song;
+use App\Models\SongStat;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -13,10 +14,10 @@ use Inertia\Inertia;
 
 class CustomerController extends Controller
 {
-    public function showMenu($identifier)
+    public function showMenu(string $identifier)
     {
         $table = ServiceTable::where('identifier', $identifier)->firstOrFail();
-        $owner = User::find($table->user_id);
+        $owner = User::findOrFail($table->user_id);
 
         $mySongsCount = Queue::where('service_table_id', $table->id)
             ->whereIn('status', ['pending', 'playing'])
@@ -26,7 +27,7 @@ class CustomerController extends Controller
         $globalQueue = Queue::where('user_id', $table->user_id)
             ->where('status', 'pending')
             ->where('type', 'song')
-            ->orderBy('order_index', 'asc')
+            ->orderBy('order_index')
             ->get();
 
         $myActiveSongs = Queue::with('song')
@@ -34,7 +35,7 @@ class CustomerController extends Controller
             ->whereIn('status', ['pending', 'playing'])
             ->where('type', 'song')
             ->orderByRaw("CASE WHEN status = 'playing' THEN 0 ELSE 1 END")
-            ->orderBy('order_index', 'asc')
+            ->orderBy('order_index')
             ->get()
             ->map(function ($queueItem) use ($globalQueue) {
                 $position = $queueItem->status === 'playing'
@@ -62,10 +63,10 @@ class CustomerController extends Controller
         ]);
     }
 
-    public function showSongSearch($identifier)
+    public function showSongSearch(string $identifier)
     {
         $table = ServiceTable::where('identifier', $identifier)->firstOrFail();
-        $owner = User::find($table->user_id);
+        $owner = User::findOrFail($table->user_id);
 
         return Inertia::render('Customer/SongSearch', [
             'table'         => $table,
@@ -73,33 +74,41 @@ class CustomerController extends Controller
         ]);
     }
 
-    public function searchSongs(Request $request, $identifier)
+    public function searchSongs(Request $request, string $identifier)
     {
-        $query = $request->input('q');
+        $query = trim((string) $request->input('q'));
 
-        if (! $query) {
+        if ($query === '') {
             return response()->json([
                 'local'   => [],
                 'youtube' => [],
             ]);
         }
 
-        $table = ServiceTable::where('identifier', $identifier)->firstOrFail();
+        ServiceTable::where('identifier', $identifier)->firstOrFail();
 
-        $localSongs = Song::where('user_id', $table->user_id)
-            ->where(function ($q) use ($query) {
-                $q->where('title', 'LIKE', "%{$query}%")
-                    ->orWhere('artist', 'LIKE', "%{$query}%");
-            })
+        $localSongs = Song::query()
+            ->search($query)
+            ->embeddable()
+            ->activePrivacy()
             ->limit(5)
-            ->get();
+            ->get([
+                'id',
+                'youtube_id',
+                'youtube_title',
+                'title',
+                'artist',
+                'channel_title',
+                'thumbnail_url',
+                'duration_seconds',
+            ]);
 
         $youtubeResults = [];
 
         if ($localSongs->count() < 3) {
-            $response = Http::get("https://www.googleapis.com/youtube/v3/search", [
+            $response = Http::get('https://www.googleapis.com/youtube/v3/search', [
                 'part'            => 'snippet',
-                'q'               => $query . " karaoke",
+                'q'               => $query . ' karaoke',
                 'maxResults'      => 10,
                 'type'            => 'video',
                 'videoEmbeddable' => 'true',
@@ -117,7 +126,7 @@ class CustomerController extends Controller
         ]);
     }
 
-    public function storeSong(Request $request, $identifier)
+    public function storeSong(Request $request, string $identifier)
     {
         $validated = $request->validate([
             'youtube_id'    => ['required', 'string', 'regex:/^[A-Za-z0-9_-]{11}$/'],
@@ -131,19 +140,7 @@ class CustomerController extends Controller
         $table = ServiceTable::where('identifier', $identifier)->firstOrFail();
 
         DB::transaction(function () use ($validated, $table) {
-            $song = Song::firstOrCreate(
-                [
-                    'user_id'    => $table->user_id,
-                    'youtube_id' => $validated['youtube_id'],
-                ],
-                [
-                    'title'         => $validated['title'],
-                    'artist'        => $validated['artist'] ?? null,
-                    'youtube_title' => $validated['youtube_title'] ?? $validated['title'],
-                    'thumbnail_url' => $validated['thumbnail_url'] ?? null,
-                    'times_played'  => 0,
-                ]
-            );
+            $song = $this->findOrCreateSongFromYoutube($validated);
 
             $hasPlaying = Queue::where('user_id', $table->user_id)
                 ->where('status', 'playing')
@@ -164,6 +161,9 @@ class CustomerController extends Controller
 
             $this->reorderQueue($table->user_id);
 
+            $songStat = SongStat::firstOrCreateFor($table->user_id, $song->id);
+            $songStat->markAsRequested();
+
             $queue->load(['song', 'serviceTable']);
 
             $this->broadcastQueue($queue);
@@ -172,6 +172,153 @@ class CustomerController extends Controller
         return redirect()
             ->route('customer.menu', $identifier)
             ->with('success', '¡Tu canción ha sido añadida a la cola!');
+    }
+
+    protected function findOrCreateSongFromYoutube(array $validated): Song
+    {
+        $youtubeData = $this->fetchYoutubeVideoData($validated['youtube_id']);
+
+        $attributes = $this->buildSongAttributes($validated, $youtubeData);
+
+        $song = Song::firstOrNew([
+            'youtube_id' => $validated['youtube_id'],
+        ]);
+
+        $song->fill($attributes);
+        $song->save();
+
+        return $song;
+    }
+
+    protected function fetchYoutubeVideoData(string $youtubeId): ?array
+    {
+        $response = Http::get('https://www.googleapis.com/youtube/v3/videos', [
+            'part' => 'snippet,contentDetails,status',
+            'id'   => $youtubeId,
+            'key'  => config('services.youtube.key'),
+        ]);
+
+        if (! $response->successful()) {
+            return null;
+        }
+
+        return $response->json('items.0');
+    }
+
+    protected function buildSongAttributes(array $validated, ?array $youtubeData): array
+    {
+        $snippet        = $youtubeData['snippet'] ?? [];
+        $contentDetails = $youtubeData['contentDetails'] ?? [];
+        $status         = $youtubeData['status'] ?? [];
+
+        $youtubeTitle      = $snippet['title'] ?? $validated['youtube_title'] ?? $validated['title'];
+        $cleanYoutubeTitle = $this->cleanYoutubeTitle($youtubeTitle);
+
+        $channelTitle = $snippet['channelTitle'] ?? null;
+
+        [$artist, $title] = $this->normalizeArtistAndTitle(
+            $cleanYoutubeTitle,
+            $validated['artist'] ?? null,
+            $channelTitle
+        );
+
+        return [
+            'youtube_title'        => $youtubeTitle,
+            'title'                => $title,
+            'artist'               => $artist,
+            'channel_title'        => $channelTitle,
+            'thumbnail_url'        => $this->resolveThumbnailUrl($snippet, $validated['thumbnail_url'] ?? null),
+            'duration_seconds'     => $this->parseYoutubeDuration($contentDetails['duration'] ?? null),
+            'category_id'          => $snippet['categoryId'] ?? null,
+            'tags'                 => $snippet['tags'] ?? null,
+            'youtube_published_at' => $snippet['publishedAt'] ?? null,
+            'is_embeddable'        => (bool) ($status['embeddable'] ?? true),
+            'privacy_status'       => $status['privacyStatus'] ?? null,
+            'definition'           => $contentDetails['definition'] ?? null,
+            'has_caption'          => ($contentDetails['caption'] ?? 'false') === 'true',
+        ];
+    }
+
+    protected function normalizeArtistAndTitle(
+        string $cleanYoutubeTitle,
+        ?string $validatedArtist = null,
+        ?string $channelTitle = null
+    ): array {
+        $artist = $validatedArtist ?: ($channelTitle ?: 'Desconocido');
+        $title  = $cleanYoutubeTitle;
+
+        if (str_contains($cleanYoutubeTitle, ' - ')) {
+            $parts = explode(' - ', $cleanYoutubeTitle, 2);
+
+            $artist = trim($parts[0]) ?: $artist;
+            $title  = trim($parts[1]) ?: $cleanYoutubeTitle;
+        }
+
+        return [$artist, $title];
+    }
+
+    protected function cleanYoutubeTitle(string $title): string
+    {
+        $patterns = [
+            '/\bkaraoke\b/i',
+            '/\blyrics?\b/i',
+            '/\blyric video\b/i',
+            '/\bletra\b/i',
+            '/\bpista\b/i',
+            '/\binstrumental\b/i',
+            '/\bversión\b/i',
+            '/\bversion\b/i',
+            '/\bofficial video\b/i',
+            '/\bvideo oficial\b/i',
+            '/\baudio oficial\b/i',
+            '/\bcon letra\b/i',
+            '/\bsin voz\b/i',
+            '/\bfull hd\b/i',
+            '/\b4k\b/i',
+            '/\bhd\b/i',
+        ];
+
+        $title = preg_replace($patterns, '', $title);
+
+        $title = preg_replace('/\(\s*\)/', '', $title);
+        $title = preg_replace('/\[\s*\]/', '', $title);
+        $title = preg_replace('/\(([-\s]*)\)/', '', $title);
+        $title = preg_replace('/\[([-\s]*)\]/', '', $title);
+
+        $title = preg_replace('/\s{2,}/', ' ', $title);
+        $title = preg_replace('/\s*-\s*-\s*/', ' - ', $title);
+
+        $title = preg_replace('/\(\s+/', '(', $title);
+        $title = preg_replace('/\s+\)/', ')', $title);
+
+        $title = trim($title);
+        $title = trim($title, '-');
+        $title = preg_replace('/\s{2,}/', ' ', $title);
+
+        return trim($title);
+    }
+
+    protected function resolveThumbnailUrl(array $snippet, ?string $fallback = null): ?string
+    {
+        return $snippet['thumbnails']['high']['url'] ?? $snippet['thumbnails']['medium']['url'] ?? $snippet['thumbnails']['default']['url'] ?? $fallback;
+    }
+
+    protected function parseYoutubeDuration(?string $duration): ?int
+    {
+        if (! $duration) {
+            return null;
+        }
+
+        try {
+            $interval = new \DateInterval($duration);
+
+            return ($interval->d * 86400)
+             + ($interval->h * 3600)
+             + ($interval->i * 60)
+             + $interval->s;
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
     protected function reorderQueue(int $userId): void

@@ -21,30 +21,33 @@ class UpdateSettingsRequest extends FormRequest
     public function rules(): array
     {
         return [
+            // Identidad
             'local_name'      => ['required', 'string', 'max:255'],
-            'description'     => ['nullable', 'string', 'max:500'], // Agregado
+            'description'     => ['nullable', 'string', 'max:500'],
 
-            // Validamos todos los colores con el mismo regex hexadecimal
+            // Tema visual
+            'theme_name'      => ['nullable', 'string', 'max:100'],
+            'theme_mode'      => ['nullable', 'in:dark,light'],
+            'is_custom_theme' => ['nullable', 'boolean'],
+
+            // Colores
             'primary_color'   => ['required', 'string', 'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/'],
             'sidebar_color'   => ['required', 'string', 'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/'],
             'accent_color'    => ['required', 'string', 'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/'],
             'secondary_color' => ['required', 'string', 'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/'],
             'text_color'      => ['required', 'string', 'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/'],
 
-            // Dark Mode es un booleano
-            'dark_mode'       => ['required', 'boolean'],
-
-            // Border Radius y Fuente
+            // Estética
             'border_radius'   => ['required', 'string', 'max:20'],
-            'font_family'     => ['required', 'string', 'max:50'], // Agregado
+            'font_family'     => ['required', 'string', 'max:50'],
 
-            // Datos de Negocio
+            // Negocio
             'yape_number'     => ['nullable', 'string', 'max:20'],
-            'whatsapp_number' => ['nullable', 'string', 'max:20'], // Agregado (El que te fallaba)
+            'whatsapp_number' => ['nullable', 'string', 'max:20'],
 
             // Archivos
             'logo'            => ['nullable', 'image', 'mimes:jpg,jpeg,png,svg', 'max:2048'],
-            'favicon_path'    => ['nullable', 'image', 'mimes:png,ico,svg', 'max:512'], // Por si habilitas favicon después
+            'favicon_path'    => ['nullable', 'image', 'mimes:png,ico,svg', 'max:512'],
         ];
     }
 }

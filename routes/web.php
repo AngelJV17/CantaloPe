@@ -70,6 +70,9 @@ Route::middleware('auth')->prefix('songs')->group(function () {
     Route::post('/', [SongController::class, 'store'])
         ->name('songs.store');
 
+    Route::put('/{song}', [SongController::class, 'update'])
+        ->name('songs.update');
+
     Route::delete('/{song}', [SongController::class, 'destroy'])
         ->name('songs.destroy');
 
