@@ -1,9 +1,11 @@
 <?php
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
 class ServiceTable extends Model
@@ -11,47 +13,68 @@ class ServiceTable extends Model
     use HasFactory;
 
     protected $fillable = [
-        'name', 'identifier', 'uuid', 'capacity',
-        'zone', 'status', 'current_session_token', 'is_active',
+        'user_id',
+        'identifier',
+        'name',
+        'uuid',
+        'status',
+        'is_active',
+        'current_session_token',
     ];
 
-    // Valores por defecto para que Eloquent sepa manejar los Enums
-    protected $attributes = [
-        'status'    => 'empty',
-        'is_active' => true,
+    protected $casts = [
+        'is_active' => 'boolean',
     ];
 
-    protected static function booted()
+    protected static function booted(): void
     {
-        static::creating(function ($table) {
-            // Genera el UUID permanente para el QR físico
-            $table->uuid = (string) Str::uuid();
-
-            // Genera el token de sesión inicial
-            $table->current_session_token = Str::random(40);
+        static::creating(function (ServiceTable $table) {
+            if (blank($table->uuid)) {
+                $table->uuid = (string) Str::uuid();
+            }
         });
     }
 
-    /**
-     * Lógica de "Limpieza/Reset" de Mesa
-     * Esto invalida los QRs de clientes que ya se fueron.
-     */
-    public function release()
-    {
-        $this->update([
-            'status'                => 'empty',
-            'current_session_token' => Str::random(40), // Nuevo token = Link viejo muere
-        ]);
-    }
-
-    // Relación: Una mesa tiene muchos pedidos en cola
-    public function queues()
-    {
-        return $this->hasMany(Queue::class);
-    }
+    /*
+    |--------------------------------------------------------------------------
+    | RELATIONSHIPS
+    |--------------------------------------------------------------------------
+    */
 
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function queues(): HasMany
+    {
+        return $this->hasMany(Queue::class);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SCOPES
+    |--------------------------------------------------------------------------
+    */
+
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->where('is_active', true);
+    }
+
+    public function scopeAvailable(Builder $query): Builder
+    {
+        return $query->where('status', 'available');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | ACCESSORS
+    |--------------------------------------------------------------------------
+    */
+
+    public function getDisplayNameAttribute(): string
+    {
+        return $this->name ?: $this->identifier;
     }
 }

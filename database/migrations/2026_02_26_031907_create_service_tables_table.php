@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 return new class extends Migration
 {
@@ -13,30 +14,24 @@ return new class extends Migration
     {
         Schema::create('service_tables', function (Blueprint $table) {
             $table->id();
-            // Esto vincula la mesa con el dueño del Karaoke (User)
+
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
 
-            $table->string('name');
-            // Por eso quitamos el ->unique() global y lo manejaremos por código o índice compuesto.
-            $table->string('identifier');
+            $table->string('identifier');       // M-01, M-02, etc.
+            $table->string('name')->nullable(); // opcional: Terraza, VIP 1, etc.
 
-            $table->uuid('uuid')->unique(); // Este sí es único universal para el QR
+            $table->uuid('uuid')->unique()->default((string) Str::uuid());
 
-            $table->integer('capacity')->default(4);
-            $table->string('zone')->default('General');
-
-            $table->enum('status', [
-                'empty', 'occupied', 'reserved', 'calling',
-                'pending_payment', 'cleaning', 'inactive', 'blocked',
-            ])->default('empty');
-
-            $table->string('current_session_token')->nullable();
+            $table->string('status')->default('available');
             $table->boolean('is_active')->default(true);
 
-            // Índice compuesto: No puede haber dos "Mesa 1" para el mismo usuario
-            $table->unique(['user_id', 'identifier']);
+            $table->string('current_session_token')->nullable();
 
             $table->timestamps();
+
+            $table->unique(['user_id', 'identifier']);
+            $table->index(['user_id', 'is_active']);
+            $table->index(['user_id', 'status']);
         });
     }
 

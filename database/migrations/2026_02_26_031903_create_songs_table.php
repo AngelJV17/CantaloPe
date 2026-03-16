@@ -40,6 +40,7 @@ return new class extends Migration
             $table->index('artist');
             $table->index('channel_title');
             $table->index('category_id');
+            $table->index(['title', 'artist']);
         });
     }
 

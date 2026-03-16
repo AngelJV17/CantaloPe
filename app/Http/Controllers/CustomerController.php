@@ -45,7 +45,7 @@ class CustomerController extends Controller
                 return [
                     'id'            => $queueItem->id,
                     'title'         => $queueItem->song
-                        ? ($queueItem->song->youtube_title ?: $queueItem->song->title)
+                        ? ($queueItem->song->title ?: $queueItem->song->youtube_title)
                         : 'Pedido: ' . $queueItem->customer_name,
                     'position'      => $position,
                     'customer_name' => $queueItem->customer_name,
@@ -71,6 +71,7 @@ class CustomerController extends Controller
         return Inertia::render('Customer/SongSearch', [
             'table'         => $table,
             'brandSettings' => $owner->settings,
+            'ownerId'       => $table->user_id,
         ]);
     }
 
@@ -91,6 +92,7 @@ class CustomerController extends Controller
             ->search($query)
             ->embeddable()
             ->activePrivacy()
+            ->orderBy('title')
             ->limit(5)
             ->get([
                 'id',
@@ -142,18 +144,13 @@ class CustomerController extends Controller
         DB::transaction(function () use ($validated, $table) {
             $song = $this->findOrCreateSongFromYoutube($validated);
 
-            $hasPlaying = Queue::where('user_id', $table->user_id)
-                ->where('status', 'playing')
-                ->where('type', 'song')
-                ->exists();
-
             $queue = Queue::create([
                 'user_id'          => $table->user_id,
                 'song_id'          => $song->id,
                 'service_table_id' => $table->id,
                 'customer_name'    => $validated['customer_name'],
                 'type'             => 'song',
-                'status'           => $hasPlaying ? 'pending' : 'playing',
+                'status'           => 'pending',
                 'is_vip'           => false,
                 'amount_paid'      => 0,
                 'order_index'      => 0,
@@ -173,12 +170,10 @@ class CustomerController extends Controller
             ->route('customer.menu', $identifier)
             ->with('success', '¡Tu canción ha sido añadida a la cola!');
     }
-
     protected function findOrCreateSongFromYoutube(array $validated): Song
     {
         $youtubeData = $this->fetchYoutubeVideoData($validated['youtube_id']);
-
-        $attributes = $this->buildSongAttributes($validated, $youtubeData);
+        $attributes  = $this->buildSongAttributes($validated, $youtubeData);
 
         $song = Song::firstOrNew([
             'youtube_id' => $validated['youtube_id'],
@@ -211,16 +206,10 @@ class CustomerController extends Controller
         $contentDetails = $youtubeData['contentDetails'] ?? [];
         $status         = $youtubeData['status'] ?? [];
 
-        $youtubeTitle      = $snippet['title'] ?? $validated['youtube_title'] ?? $validated['title'];
-        $cleanYoutubeTitle = $this->cleanYoutubeTitle($youtubeTitle);
-
+        $youtubeTitle = $snippet['title'] ?? $validated['youtube_title'] ?? $validated['title'];
         $channelTitle = $snippet['channelTitle'] ?? null;
 
-        [$artist, $title] = $this->normalizeArtistAndTitle(
-            $cleanYoutubeTitle,
-            $validated['artist'] ?? null,
-            $channelTitle
-        );
+        [$artist, $title] = $this->normalizeArtistAndTitle($youtubeTitle, $channelTitle);
 
         return [
             'youtube_title'        => $youtubeTitle,
@@ -239,19 +228,18 @@ class CustomerController extends Controller
         ];
     }
 
-    protected function normalizeArtistAndTitle(
-        string $cleanYoutubeTitle,
-        ?string $validatedArtist = null,
-        ?string $channelTitle = null
-    ): array {
-        $artist = $validatedArtist ?: ($channelTitle ?: 'Desconocido');
-        $title  = $cleanYoutubeTitle;
+    protected function normalizeArtistAndTitle(string $youtubeTitle, ?string $channelTitle = null): array
+    {
+        $cleanTitle = $this->cleanYoutubeTitle($youtubeTitle);
 
-        if (str_contains($cleanYoutubeTitle, ' - ')) {
-            $parts = explode(' - ', $cleanYoutubeTitle, 2);
+        $artist = $channelTitle ?: 'Desconocido';
+        $title  = $cleanTitle;
+
+        if (str_contains($cleanTitle, ' - ')) {
+            $parts = explode(' - ', $cleanTitle, 2);
 
             $artist = trim($parts[0]) ?: $artist;
-            $title  = trim($parts[1]) ?: $cleanYoutubeTitle;
+            $title  = trim($parts[1]) ?: $cleanTitle;
         }
 
         return [$artist, $title];
@@ -284,10 +272,8 @@ class CustomerController extends Controller
         $title = preg_replace('/\[\s*\]/', '', $title);
         $title = preg_replace('/\(([-\s]*)\)/', '', $title);
         $title = preg_replace('/\[([-\s]*)\]/', '', $title);
-
         $title = preg_replace('/\s{2,}/', ' ', $title);
         $title = preg_replace('/\s*-\s*-\s*/', ' - ', $title);
-
         $title = preg_replace('/\(\s+/', '(', $title);
         $title = preg_replace('/\s+\)/', ')', $title);
 
@@ -342,8 +328,8 @@ class CustomerController extends Controller
     {
         $fullQueue = Queue::with(['song', 'serviceTable'])
             ->where('user_id', $queue->user_id)
-            ->whereIn('status', ['pending', 'ready', 'playing'])
             ->where('type', 'song')
+            ->whereIn('status', ['pending', 'ready', 'playing'])
             ->orderByRaw("CASE WHEN status = 'playing' THEN 0 ELSE 1 END")
             ->orderBy('order_index')
             ->get()

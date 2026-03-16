@@ -29,7 +29,6 @@ return new class extends Migration
             $table->unique(['user_id', 'song_id']);
             $table->index(['user_id', 'times_played']);
             $table->index(['user_id', 'times_requested']);
-            $table->index(['user_id', 'last_played_at']);
         });
     }
 

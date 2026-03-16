@@ -17,14 +17,14 @@ class StageController extends Controller
 
         $current = Queue::with(['song', 'serviceTable'])
             ->where('user_id', $user->id)
-            ->where('status', 'playing')
             ->where('type', 'song')
+            ->where('status', 'playing')
             ->first();
 
         $next = Queue::with(['song', 'serviceTable'])
             ->where('user_id', $user->id)
-            ->whereIn('status', ['pending', 'ready'])
             ->where('type', 'song')
+            ->whereIn('status', ['pending', 'ready'])
             ->orderBy('order_index')
             ->first();
 
@@ -36,34 +36,56 @@ class StageController extends Controller
         ]);
     }
 
+    public function current(User $user)
+    {
+        $current = Queue::with(['song', 'serviceTable'])
+            ->where('user_id', $user->id)
+            ->where('type', 'song')
+            ->where('status', 'playing')
+            ->first();
+
+        $next = Queue::with(['song', 'serviceTable'])
+            ->where('user_id', $user->id)
+            ->where('type', 'song')
+            ->whereIn('status', ['pending', 'ready'])
+            ->orderBy('order_index')
+            ->first();
+
+        return response()->json([
+            'current' => $current,
+            'next'    => $next,
+        ]);
+    }
+
     public function finish(Queue $queue)
     {
         $result = DB::transaction(function () use ($queue) {
-            $queue->loadMissing(['song', 'serviceTable']);
+            abort_unless($queue->type === 'song', 404);
 
             $queue->update([
-                'status' => 'played',
+                'status'      => 'played',
+                'finished_at' => now(),
             ]);
 
-            // Registrar estadística de reproducción
             if ($queue->song_id) {
-                $songStat = SongStat::firstOrCreateFor($queue->user_id, $queue->song_id);
-                $songStat->markAsPlayed();
+                $stat = SongStat::firstOrCreateFor($queue->user_id, $queue->song_id);
+                $stat->markAsPlayed();
             }
 
             $current = Queue::with(['song', 'serviceTable'])
                 ->where('user_id', $queue->user_id)
-                ->whereIn('status', ['pending', 'ready'])
                 ->where('type', 'song')
+                ->whereIn('status', ['pending', 'ready'])
                 ->orderBy('order_index')
                 ->first();
 
             if ($current) {
                 $current->update([
-                    'status' => 'playing',
+                    'status'        => 'playing',
+                    'started_at'    => now(),
+                    'finished_at'   => null,
+                    'failed_reason' => null,
                 ]);
-
-                $current->load(['song', 'serviceTable']);
             }
 
             $next = null;
@@ -71,16 +93,16 @@ class StageController extends Controller
             if ($current) {
                 $next = Queue::with(['song', 'serviceTable'])
                     ->where('user_id', $queue->user_id)
-                    ->where('status', 'pending')
                     ->where('type', 'song')
+                    ->where('status', 'pending')
                     ->orderBy('order_index')
                     ->first();
             }
 
             $fullQueue = Queue::with(['song', 'serviceTable'])
                 ->where('user_id', $queue->user_id)
-                ->whereIn('status', ['pending', 'ready', 'playing'])
                 ->where('type', 'song')
+                ->whereIn('status', ['pending', 'ready', 'playing'])
                 ->orderByRaw("CASE WHEN status = 'playing' THEN 0 ELSE 1 END")
                 ->orderBy('order_index')
                 ->get()

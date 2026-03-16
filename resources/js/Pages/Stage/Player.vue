@@ -17,7 +17,7 @@ const nextSong = ref(props.next ?? null)
 const playerReady = ref(false)
 const highlightNext = ref(false)
 
-const stageMode = ref("idle")
+const stageMode = ref(props.current?.song?.youtube_id ? "idle" : "waiting")
 // idle | thanks | announce | countdown | waiting
 
 const countdown = ref(3)
@@ -145,7 +145,10 @@ function onPlayerReady() {
 
     if (!currentSong.value?.song?.youtube_id) {
         stageMode.value = "waiting"
+        return
     }
+
+    stageMode.value = "idle"
 }
 
 function onPlayerStateChange(event) {
@@ -334,7 +337,6 @@ function initRealtime() {
         if (
             stageMode.value === "waiting" &&
             newVideo &&
-            newVideo !== currentVideo &&
             playerReady.value
         ) {
             loadCurrentVideo()
@@ -436,11 +438,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="fixed inset-0 bg-black flex flex-col overflow-hidden font-sans select-none cursor-none text-white">
+    <div class="fixed inset-0 bg-black flex flex-col overflow-hidden font-sans select-none text-white">
 
         <!-- VIDEO -->
         <div class="relative flex-grow bg-black overflow-hidden">
-            <div id="youtube-player" class="absolute inset-0 z-10"></div>
+            <div id="youtube-player" class="absolute inset-0 z-10" :class="!currentSong?.song?.youtube_id || stageMode === 'waiting'
+                ? 'opacity-0 pointer-events-none'
+                : 'opacity-100'"></div>
 
             <!-- OVERLAY STAGE -->
             <Transition enter-active-class="transition duration-500 ease-out" enter-from-class="opacity-0 scale-95"
@@ -515,17 +519,69 @@ onBeforeUnmount(() => {
                     </div>
 
                     <!-- ESPERA -->
-                    <div v-else-if="stageMode === 'waiting'" class="relative text-center z-10 max-w-5xl px-8">
-                        <p class="text-amber-400 text-xl font-black uppercase tracking-[0.35em] mb-8 animate-pulse">
-                            Escenario libre
-                        </p>
+                    <div v-else-if="stageMode === 'waiting'"
+                        class="relative z-10 w-full h-full flex items-center justify-center px-8">
+                        <div class="absolute inset-0 pointer-events-none">
+                            <div class="absolute inset-0 opacity-20" :style="{
+                                background: `radial - gradient(circle at 50 % 30 %, ${props.settings?.accent_color || '#f59e0b'}55, transparent 35 %)`
+                            }">
+                            </div>
+                            <div class="absolute inset-0 bg-gradient-to-b from-black/20 via-black/40 to-black/80"></div>
+                        </div>
 
-                        <h1 class="text-[90px] font-black uppercase tracking-tight text-white/95">
-                            Esperando próximo cantante
-                        </h1>
+                        <div class="relative max-w-5xl w-full text-center">
+                            <div class="inline-flex items-center gap-3 px-6 py-3 rounded-full border mb-8 backdrop-blur-md"
+                                :style="{
+                                    borderColor: `${props.settings?.accent_color || '#f59e0b'} 55`,
+                                    backgroundColor: `${props.settings?.accent_color || '#f59e0b'} 15`
+                                }">
+                                <span class="w-3 h-3 rounded-full animate-pulse bg-amber-400"></span>
+                                <span class="text-sm md:text-base font-black uppercase tracking-[0.35em] text-white/90">
+                                    Escenario libre
+                                </span>
+                            </div>
 
-                        <div class="mt-8 text-2xl text-white/60 italic">
-                            Escanea el QR de tu mesa y pide tu canción
+                            <div class="space-y-6">
+                                <h1
+                                    class="text-5xl md:text-7xl font-black uppercase tracking-tight text-white drop-shadow-[0_0_30px_rgba(255,255,255,0.25)]">
+                                    {{ props.settings?.local_name || 'CantaloPe' }}
+                                </h1>
+
+                                <p class="text-xl md:text-3xl font-black uppercase tracking-[0.18em] text-white/90">
+                                    Haz tu pedido escaneando el QR de tu mesa
+                                </p>
+
+                                <p class="text-base md:text-xl text-white/60 max-w-3xl mx-auto leading-relaxed">
+                                    Tu canción aparecerá aquí cuando el encargado la inicie desde la cabina.
+                                </p>
+                            </div>
+
+                            <div class="mt-12 flex items-center justify-center gap-6 flex-wrap">
+                                <div class="px-6 py-4 rounded-2xl border backdrop-blur-md" :style="{
+                                    borderColor: 'rgba(255,255,255,0.10)',
+                                    backgroundColor: 'rgba(255,255,255,0.05)'
+                                }">
+                                    <p class="text-[11px] font-black uppercase tracking-[0.3em] text-white/50 mb-2">
+                                        Estado
+                                    </p>
+                                    <p class="text-2xl font-black uppercase text-white">
+                                        Esperando siguiente show
+                                    </p>
+                                </div>
+
+                                <div class="px-6 py-4 rounded-2xl border backdrop-blur-md" :style="{
+                                    borderColor: `${props.settings?.accent_color || '#f59e0b'} 40`,
+                                    backgroundColor: `${props.settings?.accent_color || '#f59e0b'} 12`
+                                }">
+                                    <p class="text-[11px] font-black uppercase tracking-[0.3em] text-white/50 mb-2">
+                                        Mensaje
+                                    </p>
+                                    <p class="text-2xl font-black uppercase"
+                                        :style="{ color: props.settings?.accent_color || '#f59e0b' }">
+                                        Pide tu canción ahora
+                                    </p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -543,7 +599,7 @@ onBeforeUnmount(() => {
                             En Escena
                         </span>
                         <h2 class="text-4xl font-black uppercase tracking-tight leading-none italic">
-                            {{ currentSong?.customer_name || "—" }}
+                            {{ currentSong?.customer_name || "Escenario Libre" }}
                         </h2>
                     </div>
 
@@ -561,7 +617,9 @@ onBeforeUnmount(() => {
                     <div class="flex flex-col max-w-sm">
                         <span class="text-white/40 text-[9px] font-bold uppercase tracking-widest mb-1">Cantando</span>
                         <span class="text-xl font-bold italic truncate text-amber-100/70">
-                            "{{ currentSong?.song?.title || "Sin título" }}"
+                            "{{
+                                currentSong?.song?.title ? `${currentSong.song.title}` : 'Esperando el siguiente pedido'
+                            }}"
                         </span>
                     </div>
                 </div>
@@ -633,10 +691,6 @@ onBeforeUnmount(() => {
 
 .animate-marquee {
     animation: marquee 15s linear infinite;
-}
-
-.cursor-none {
-    cursor: none !important;
 }
 
 #youtube-player iframe {

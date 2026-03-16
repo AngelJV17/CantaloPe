@@ -15,38 +15,37 @@ class ServiceTableController extends Controller
 
         $tables = ServiceTable::where('user_id', $user->id)
             ->when($request->search, function ($query, $search) {
-                $query->where(function($q) use ($search) {
+                $query->where(function ($q) use ($search) {
                     $q->where('name', 'like', "%{$search}%")
-                      ->orWhere('identifier', 'like', "%{$search}%");
+                        ->orWhere('identifier', 'like', "%{$search}%");
                 });
             })
             ->orderBy('identifier', 'asc')
             ->paginate($request->perPage ?? 12)
-            ->withQueryString(); // Mantiene los filtros al cambiar de página
+            ->withQueryString();
 
         return Inertia::render('Tables/Index', [
             'tables'   => $tables,
             'filters'  => $request->only(['search', 'perPage']),
-            'settings' => $user->shopSettings, 
+            'settings' => $user->settings,
         ]);
     }
 
     public function store(Request $request)
     {
-        $request->validate([
-            'name'       => 'required|string|max:50',
-            // El identificador es único por usuario
-            'identifier' => 'required|string|max:20',
-            'zone'       => 'nullable|string',
-            'capacity'   => 'nullable|integer',
+        $user = Auth::user();
+
+        $validated = $request->validate([
+            'identifier' => ['required', 'string', 'max:20'],
+            'name'       => ['nullable', 'string', 'max:50'],
         ]);
 
-        Auth::user()->serviceTables()->create([
-            'name'       => $request->name,
-            'identifier' => $request->identifier,
+        $user->serviceTables()->create([
+            'identifier' => $validated['identifier'],
+            'name'       => $validated['name'] ?? null,
             'uuid'       => (string) Str::uuid(),
-            'zone'       => $request->zone ?? 'General',
-            'capacity'   => $request->capacity ?? 4,
+            'status'     => 'available',
+            'is_active'  => true,
         ]);
 
         return back()->with('success', 'Mesa creada con éxito.');
@@ -54,28 +53,28 @@ class ServiceTableController extends Controller
 
     public function update(Request $request, ServiceTable $table)
     {
-        // Seguridad: Verificar que la mesa pertenece al usuario
-        if ($table->user_id !== Auth::id()) {
-            abort(403, 'No tienes permiso para editar esta mesa.');
-        }
+        abort_unless($table->user_id === Auth::id(), 403);
 
-        $request->validate([
-            'name'       => 'required|string|max:50',
-            'identifier' => 'required|string|max:20',
-            'zone'       => 'nullable|string',
-            'capacity'   => 'nullable|integer',
+        $validated = $request->validate([
+            'identifier' => ['required', 'string', 'max:20'],
+            'name'       => ['nullable', 'string', 'max:50'],
+            'status'     => ['nullable', 'string', 'max:50'],
+            'is_active'  => ['nullable', 'boolean'],
         ]);
 
-        $table->update($request->only(['name', 'identifier', 'zone', 'capacity']));
+        $table->update([
+            'identifier' => $validated['identifier'],
+            'name'       => $validated['name'] ?? null,
+            'status'     => $validated['status'] ?? $table->status,
+            'is_active'  => $validated['is_active'] ?? $table->is_active,
+        ]);
 
         return back()->with('success', 'Mesa actualizada correctamente.');
     }
 
     public function destroy(ServiceTable $table)
     {
-        if ($table->user_id !== Auth::id()) {
-            abort(403);
-        }
+        abort_unless($table->user_id === Auth::id(), 403);
 
         $table->delete();
 

@@ -3,7 +3,6 @@ namespace App\Http\Controllers;
 
 use App\Models\Song;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Inertia\Inertia;
 
@@ -11,7 +10,7 @@ class SongController extends Controller
 {
     public function index(Request $request)
     {
-        $user = Auth::user();
+        $user = $request->user();
 
         $query = Song::query();
 
@@ -27,8 +26,7 @@ class SongController extends Controller
             });
         }
 
-        $songs = $query
-            ->orderByDesc('created_at')
+        $songs = $query->orderBy('title', 'asc')
             ->paginate((int) $request->input('perPage', 10))
             ->withQueryString();
 
@@ -80,10 +78,8 @@ class SongController extends Controller
         ]);
 
         $song->update([
-            'title'  => trim($validated['title']),
-            'artist' => filled($validated['artist'] ?? null)
-                ? trim($validated['artist'])
-                : null,
+            'title'  => $validated['title'],
+            'artist' => $validated['artist'] ?? null,
         ]);
 
         return back()->with('success', 'Canción actualizada correctamente.');
@@ -195,10 +191,8 @@ class SongController extends Controller
         $title = preg_replace('/\[\s*\]/', '', $title);
         $title = preg_replace('/\(([-\s]*)\)/', '', $title);
         $title = preg_replace('/\[([-\s]*)\]/', '', $title);
-
         $title = preg_replace('/\s{2,}/', ' ', $title);
         $title = preg_replace('/\s*-\s*-\s*/', ' - ', $title);
-
         $title = preg_replace('/\(\s+/', '(', $title);
         $title = preg_replace('/\s+\)/', ')', $title);
 

@@ -20,29 +20,20 @@ class ShopSettingsController extends Controller
         $settings = Setting::firstOrCreate(
             ['user_id' => $user->id],
             [
-                // Identidad
                 'local_name'      => 'CANTALOPE',
                 'logo_path'       => null,
                 'favicon_path'    => null,
                 'description'     => null,
-
-                // Tema
                 'theme_name'      => 'Neón',
                 'theme_mode'      => 'dark',
                 'is_custom_theme' => false,
-
-                // Colores
                 'primary_color'   => '#090a0f',
                 'sidebar_color'   => '#12141c',
                 'accent_color'    => '#6366f1',
                 'secondary_color' => '#4338ca',
                 'text_color'      => '#f3f4f6',
-
-                // Estética
                 'border_radius'   => '1rem',
                 'font_family'     => 'Inter',
-
-                // Negocio
                 'yape_number'     => null,
                 'whatsapp_number' => null,
             ]
@@ -82,7 +73,6 @@ class ShopSettingsController extends Controller
 
             unset($data['logo']);
 
-            // Normalizar theme_mode
             if (isset($data['theme_mode'])) {
                 $data['theme_mode'] = in_array($data['theme_mode'], ['dark', 'light'], true)
                     ? $data['theme_mode']
@@ -91,12 +81,10 @@ class ShopSettingsController extends Controller
                 $data['theme_mode'] = $settings->theme_mode ?: 'dark';
             }
 
-            // Si no llega theme_name, mantenemos el actual
             if (! isset($data['theme_name']) || blank($data['theme_name'])) {
                 $data['theme_name'] = $settings->theme_name ?: 'Neón';
             }
 
-            // Si no llega is_custom_theme, mantenemos el actual
             if (! array_key_exists('is_custom_theme', $data)) {
                 $data['is_custom_theme'] = $settings->is_custom_theme ?? false;
             }
